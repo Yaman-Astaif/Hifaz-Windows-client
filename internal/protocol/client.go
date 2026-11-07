@@ -34,7 +34,8 @@ type Options struct {
 	UserAgent string
 }
 
-// Client talks to one Hifaz server.
+// Client talks to one Hifaz server. Once its pin is set, it is safe for
+// concurrent use; SetPin and Info, which change the pin, are not.
 type Client struct {
 	server    string
 	pin       Pin
@@ -257,12 +258,22 @@ func (c *Client) login(ctx context.Context, auth Auth, path string, body any) (*
 	return &LoginResult{Session: s, Document: answer.SignedDocument}, nil
 }
 
-// Session reads the session status, waiting up to wait for a change.
-func (c *Client) Session(ctx context.Context, auth Auth, wait time.Duration) (*Session, SignedDocument, error) {
+// Session reads the session status. With wait > 0 the server holds the
+// answer up to wait until something changes; known is the configuration
+// version in use (0 if none), so the server answers at once when it has a
+// different one.
+func (c *Client) Session(ctx context.Context, auth Auth, wait time.Duration, known int64) (*Session, SignedDocument, error) {
 	var doc SignedDocument
-	path := APIPrefix + "/session"
+	q := url.Values{}
 	if wait > 0 {
-		path += "?wait=" + strconv.Itoa(int(min(wait, MaxWait)/time.Second))
+		q.Set("wait", strconv.Itoa(int(min(wait, MaxWait)/time.Second)))
+	}
+	if known > 0 {
+		q.Set("version", strconv.FormatInt(known, 10))
+	}
+	path := APIPrefix + "/session"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	if err := c.call(ctx, http.MethodGet, path, nil, &auth, &doc); err != nil {
 		return nil, doc, err

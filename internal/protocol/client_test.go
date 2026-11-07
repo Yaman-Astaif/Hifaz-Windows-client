@@ -132,7 +132,7 @@ func TestFullFlow(t *testing.T) {
 				srv.SetAllowedIPs("10.98.0.0/16", "10.20.0.0/16")
 			}()
 			start := time.Now()
-			s, _, err := c.Session(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}, 30*time.Second)
+			s, _, err := c.Session(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}, 30*time.Second, v1)
 			if err != nil || s.Config == nil || s.Config.Version != v1+1 || len(s.Config.AllowedIPs) != 2 {
 				t.Fatalf("session: %+v %v", s, err)
 			}
@@ -140,10 +140,18 @@ func TestFullFlow(t *testing.T) {
 				t.Fatal("long-poll did not return on change")
 			}
 
+			// A change made before the call is answered at once, not after the wait.
+			srv.SetAllowedIPs("10.98.0.0/16")
+			start = time.Now()
+			s, _, err = c.Session(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}, 30*time.Second, v1+1)
+			if err != nil || s.Config.Version != v1+2 || time.Since(start) > 5*time.Second {
+				t.Fatalf("missed change: %+v %v after %v", s, err, time.Since(start))
+			}
+
 			if err := c.Logout(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}); err != nil {
 				t.Fatal(err)
 			}
-			s, _, err = c.Session(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}, 0)
+			s, _, err = c.Session(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t), SessionToken: token}, 0, 0)
 			if err != nil || s.Status != protocol.StatusEnded || s.Reason != protocol.ReasonSignedOut || s.Config != nil {
 				t.Fatalf("after logout: %+v %v", s, err)
 			}

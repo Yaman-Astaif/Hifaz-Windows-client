@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,9 @@ type Server struct {
 	config        protocol.Config
 	changed       chan struct{}
 	minAppVersion string
+	appDownload   string
+	renewAfter    time.Duration
+	renewals      int
 	nextID        int
 }
 
@@ -91,7 +95,7 @@ func New(t testing.TB, opts Options) *Server {
 		prefix: strings.TrimRight(opts.Prefix, "/"), identity: priv, now: opts.Now,
 		users: map[string]*user{}, links: map[string]*link{}, steps: map[string]*step{},
 		devices: map[string]*Device{}, sessions: map[string]*session{}, seen: map[string]time.Time{},
-		changed: make(chan struct{}),
+		changed: make(chan struct{}), renewAfter: 76 * 24 * time.Hour,
 		config: protocol.Config{
 			Version: 1, Address: "10.98.10.4/32", Endpoint: "vpn.example.com:51820",
 			ServerPublicKey: "mkk2/n0976hg+yS1HkmS3Jr4EphDhzmX+vOZ02alXlY=",
@@ -206,6 +210,41 @@ func (s *Server) SetMinAppVersion(v string) {
 	s.minAppVersion = v
 }
 
+// SetAppDownload sets app_download for Windows.
+func (s *Server) SetAppDownload(url string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appDownload = url
+}
+
+// SetRenewAfter sets how long after now renew_after lies (negative: renewal
+// is due).
+func (s *Server) SetRenewAfter(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renewAfter = d
+}
+
+// ActiveSessions counts connected sessions.
+func (s *Server) ActiveSessions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, se := range s.sessions {
+		if se.status == protocol.StatusConnected {
+			n++
+		}
+	}
+	return n
+}
+
+// Renewals counts key renewals.
+func (s *Server) Renewals() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renewals
+}
+
 func (s *Server) notifyLocked() {
 	close(s.changed)
 	s.changed = make(chan struct{})
@@ -215,9 +254,12 @@ func (s *Server) notifyLocked() {
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	minVersion := map[string]string{}
+	minVersion, download := map[string]string{}, map[string]string{}
 	if s.minAppVersion != "" {
 		minVersion["windows"] = s.minAppVersion
+	}
+	if s.appDownload != "" {
+		download["windows"] = s.appDownload
 	}
 	s.mu.Unlock()
 	s.writeSigned(w, map[string]any{
@@ -226,6 +268,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"protocol": map[string]int{"min": 1, "max": 1}, "server_version": "0.8.0",
 		"identity_key":    protocol.EncodeEd25519PublicKey(s.identity.Public().(ed25519.PublicKey)),
 		"min_app_version": minVersion, "features": []string{"enroll", "login", "session", "renew"},
+		"app_download": download,
 	})
 }
 
@@ -455,9 +498,11 @@ func (s *Server) handleSession(w http.ResponseWriter, q *request) {
 		writeError(w, 401, protocol.ErrCodeInvalidSession)
 		return
 	}
-	if wait := q.r.URL.Query().Get("wait"); wait != "" && se.status == protocol.StatusConnected {
-		var secs int
-		fmt.Sscan(wait, &secs)
+	query := q.r.URL.Query()
+	known, _ := strconv.ParseInt(query.Get("version"), 10, 64)
+	if wait := query.Get("wait"); wait != "" && se.status == protocol.StatusConnected &&
+		(known == 0 || known == s.config.Version) {
+		secs, _ := strconv.Atoi(wait)
 		changed := s.changed
 		s.mu.Unlock()
 		select {
@@ -503,10 +548,11 @@ func (s *Server) handleRenew(w http.ResponseWriter, q *request) {
 	var psk protocol.Key
 	rand.Read(psk[:])
 	q.device.WGPublicKey, q.device.PSK = wgPub, psk
+	s.renewals++
 	sealed, _ := protocol.SealPSK(psk, wgPub, q.device.ID, rand.Reader)
 	s.writeSigned(w, map[string]any{
 		"type": protocol.TypeRenewed, "nonce": q.nonce, "server": s.URL(), "issued_at": s.now(),
-		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(76 * 24 * time.Hour),
+		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(s.renewAfter),
 		"psk_sealed": sealed, "config": s.config,
 	})
 }
@@ -525,7 +571,7 @@ func (s *Server) writeSession(w http.ResponseWriter, q *request, se *session) {
 		"type": protocol.TypeSession, "nonce": q.nonce, "server": s.URL(), "issued_at": s.now(),
 		"status": se.status, "session_id": se.id, "session_token": se.token,
 		"expires_at": s.now().Add(8 * time.Hour), "idle_timeout_seconds": 900,
-		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(76 * 24 * time.Hour),
+		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(s.renewAfter),
 	}
 	if se.status == protocol.StatusConnected {
 		doc["config"] = s.config
