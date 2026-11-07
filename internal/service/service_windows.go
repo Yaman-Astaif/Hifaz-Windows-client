@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/daemon"
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/ipc"
@@ -123,6 +124,9 @@ func start() (*server, error) {
 	if err := tunnel.Cleanup(); err != nil {
 		slog.Warn("cleaning up after an earlier run", "err", err)
 	}
+	if err := setRecovery(); err != nil {
+		slog.Warn("setting restart on failure", "err", err)
+	}
 	ln, err := ipc.Listen(ipc.PipeName)
 	if err != nil {
 		logf.Close()
@@ -142,6 +146,26 @@ func start() (*server, error) {
 	s.wg.Add(1)
 	go s.serve()
 	return s, nil
+}
+
+// setRecovery makes Windows restart the service if it fails: after 5
+// seconds twice, then after a minute; the count resets after a day.
+func setRecovery() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(Name)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return s.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: time.Minute},
+	}, 24*60*60)
 }
 
 // loadPolicy reads the machine policy on every use, so a change applies to

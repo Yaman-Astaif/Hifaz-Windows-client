@@ -54,11 +54,8 @@
                           Vital="yes">
             <ServiceDependency Id="Nsi" />
             <ServiceDependency Id="TcpIp" />
-            <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
-              <Failure Action="restartService" Delay="5000" />
-              <Failure Action="restartService" Delay="5000" />
-              <Failure Action="restartService" Delay="60000" />
-            </ServiceConfigFailureActions>
+            <!-- Restart on failure is set by the service itself when it
+                 starts (more reliable than MsiServiceConfigFailureActions). -->
           </ServiceInstall>
           <ServiceControl Id="HifazServiceControl" Name="Hifaz" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
         </Component>
@@ -75,10 +72,14 @@
         </Component>
 
         <Directory Id="LicensesFolder" Name="licenses">
-          <Component Id="Licenses">
+          <Component Id="NoticeTxt">
             <File Id="NoticeTxt" Source="$(BinDir)\licenses\THIRD-PARTY-NOTICES.txt" KeyPath="yes" />
-            <File Id="WireGuardNTLicense" Source="$(BinDir)\licenses\wireguard-nt-LICENSE.txt" />
-            <File Id="CopyrightTxt" Source="$(BinDir)\licenses\COPYRIGHT.txt" />
+          </Component>
+          <Component Id="WireGuardNTLicense">
+            <File Id="WireGuardNTLicense" Source="$(BinDir)\licenses\wireguard-nt-LICENSE.txt" KeyPath="yes" />
+          </Component>
+          <Component Id="CopyrightTxt">
+            <File Id="CopyrightTxt" Source="$(BinDir)\licenses\COPYRIGHT.txt" KeyPath="yes" />
           </Component>
         </Directory>
       </Directory>
@@ -106,7 +107,9 @@
       <ComponentRef Id="Service" />
       <ComponentRef Id="WireGuardNT" />
       <ComponentRef Id="StartUp" />
-      <ComponentRef Id="Licenses" />
+      <ComponentRef Id="NoticeTxt" />
+      <ComponentRef Id="WireGuardNTLicense" />
+      <ComponentRef Id="CopyrightTxt" />
       <ComponentRef Id="StartMenu" />
     </Feature>
   </Package>
