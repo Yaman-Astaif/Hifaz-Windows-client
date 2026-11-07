@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
@@ -62,9 +63,10 @@ type Options struct {
 	Log          func(msg string, args ...any)
 }
 
-// host is the one window of the process. The Win32 window procedure is a
-// plain function, so it reaches the host through this variable.
-var host *windowHost
+// theHost is the one window of the process. The Win32 window procedure is
+// a plain function, so it reaches the host through this variable. OnView
+// reads it from the app's goroutine, hence atomic.
+var theHost atomic.Pointer[windowHost]
 
 type windowHost struct {
 	o       Options
@@ -96,7 +98,7 @@ func Run(o Options) error {
 	if h.o.Log == nil {
 		h.o.Log = func(string, ...any) {}
 	}
-	host = h
+	theHost.Store(h)
 	if err := h.createWindow(); err != nil {
 		return err
 	}
@@ -123,14 +125,17 @@ func Run(o Options) error {
 
 // OnView is the app's OnView callback: it may be called from any goroutine.
 func OnView(v app.View) {
-	h := host
+	h := theHost.Load()
 	if h == nil {
 		return
 	}
 	h.mu.Lock()
 	h.view = v
+	hwnd := h.hwnd
 	h.mu.Unlock()
-	postMessage(h.hwnd, wmAppView, 0, 0)
+	if hwnd != 0 { // before the window exists, the page asks for it when ready
+		postMessage(hwnd, wmAppView, 0, 0)
+	}
 }
 
 // ShowExisting asks a running instance to show its window; it reports
@@ -167,7 +172,9 @@ func (h *windowHost) createWindow() error {
 	if w == 0 {
 		return err
 	}
+	h.mu.Lock()
 	h.hwnd = windows.HWND(w)
+	h.mu.Unlock()
 	h.scaleWindow()
 	h.makeIcons()
 	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconSmall, uintptr(h.icons[0]))
@@ -238,8 +245,8 @@ func (h *windowHost) quit() {
 }
 
 func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
-	h := host
-	if h == nil || hwnd != h.hwnd {
+	h := theHost.Load()
+	if h == nil || hwnd != h.hwnd { // also during CreateWindowEx, before hwnd is set
 		r, _, _ := pDefWindowProcW.Call(uintptr(hwnd), uintptr(m), w, l)
 		return r
 	}
@@ -262,8 +269,13 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		}
 		return 0
 	case wmDpiChanged:
+		// Take the size Windows suggests for the new monitor.
+		r := (*rect)(osPointer(l))
+		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
+			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 		h.makeIcons()
 		h.updateTray()
+		return 0
 	case wmGetMinMaxInfo:
 		mm := (*minMaxInfo)(osPointer(l))
 		mm.MinTrackSize = point{int32(h.scale(minWidth)), int32(h.scale(minHeight))}

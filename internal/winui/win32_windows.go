@@ -123,6 +123,8 @@ type wndClassEx struct {
 
 type point struct{ X, Y int32 }
 
+type rect struct{ Left, Top, Right, Bottom int32 }
+
 type msg struct {
 	HWnd    windows.HWND
 	Message uint32

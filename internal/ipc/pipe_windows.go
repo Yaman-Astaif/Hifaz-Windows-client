@@ -319,8 +319,19 @@ func (c *Conn) Close() error {
 	}
 	c.closed = true
 	c.mu.Unlock()
-	windows.CancelIoEx(c.h, nil)
-	c.inflight.Wait()
+	// A Read or Write may be between begin and issuing its I/O, so one
+	// cancel can miss it: cancel until every operation has returned.
+	done := make(chan struct{})
+	go func() { c.inflight.Wait(); close(done) }()
+	for {
+		windows.CancelIoEx(c.h, nil)
+		select {
+		case <-done:
+		case <-time.After(20 * time.Millisecond):
+			continue
+		}
+		break
+	}
 	windows.DisconnectNamedPipe(c.h) // fails harmlessly on the client end
 	err := windows.CloseHandle(c.h)
 	c.closeEvents()
