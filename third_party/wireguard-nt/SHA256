@@ -3,3 +3,6 @@
 # scripts\fetch-wireguard-nt.ps1 on a trusted Windows machine; it checks that
 # both DLLs are signed by WireGuard LLC and prints the hash. Put the hash on
 # the next line (and nothing else that is not a comment).
+# Pinned 2026-11-08 from the CI run on GitHub's Windows runner, where both
+# DLLs passed the WireGuard LLC signature check.
+dceb30a9bc4be48cce0f74160fc88a585a2c2627366e8f846fc6658f9038dace

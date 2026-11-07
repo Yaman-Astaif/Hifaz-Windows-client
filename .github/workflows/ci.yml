@@ -41,7 +41,8 @@ jobs:
           go test -c -o build\tunnel-test\tunnel.test.exe .\internal\tunnel
           Copy-Item build\wireguard-nt\sdk\wireguard-nt\bin\amd64\wireguard.dll build\tunnel-test\
           $env:HIFAZ_TUNNEL_TEST = "1"
-          build\tunnel-test\tunnel.test.exe -test.v -test.run TestTunnelUpDown
+          # Quoted: PowerShell would split -test.v at the dot.
+          & build\tunnel-test\tunnel.test.exe '-test.v' '-test.run=TestTunnelUpDown'
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build the installer (x64)
         shell: pwsh
