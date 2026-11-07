@@ -1,0 +1,46 @@
+package ipc
+
+import (
+	"bytes"
+	"encoding/binary"
+	"testing"
+)
+
+func TestRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	in := Request{Op: OpConnect, Server: "https://vpn.example.com", PrivateKey: []byte{1, 2, 3}, Since: 7}
+	if err := Write(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	var out Request
+	if err := Read(&buf, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Op != in.Op || out.Server != in.Server || !bytes.Equal(out.PrivateKey, in.PrivateKey) || out.Since != 7 {
+		t.Fatalf("%+v", out)
+	}
+	out.Wipe()
+	if !bytes.Equal(out.PrivateKey, []byte{0, 0, 0}) {
+		t.Fatal("not wiped")
+	}
+}
+
+func TestLimits(t *testing.T) {
+	if err := Write(new(bytes.Buffer), Request{PSK: make([]byte, MaxMessage)}); err == nil {
+		t.Fatal("oversized message written")
+	}
+	for _, n := range []uint32{0, MaxMessage + 1} {
+		var hdr [4]byte
+		binary.BigEndian.PutUint32(hdr[:], n)
+		var r Request
+		if err := Read(bytes.NewReader(hdr[:]), &r); err == nil {
+			t.Fatalf("length %d accepted", n)
+		}
+	}
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], 10)
+	var r Request
+	if err := Read(bytes.NewReader(append(hdr[:], "{}"...)), &r); err == nil {
+		t.Fatal("short body accepted")
+	}
+}

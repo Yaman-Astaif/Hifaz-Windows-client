@@ -1,0 +1,55 @@
+{
+  "device": {
+    "device_id": "d_test0001",
+    "public_key": "Rt5W9DXYsn7H9ymTtVlLroHTNs6YueRmDK4vNJDBn2s=",
+    "seed_hex": "68c36c8826c9731f4c513a35416fd4c86ef18278cffd3c3e716cadb46c451587"
+  },
+  "identity": {
+    "fingerprint": "Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q",
+    "fingerprint_display": "Y8wKPoS95ovsvxPa4wePDK",
+    "public_key": "HCTAITT6xz/3Bv0NeFf3c9nySkk99JSYcPiZtILkABE=",
+    "seed_hex": "24acee79a5aba9357fd081b21ee22a13a620a09b9b333006baf28f0c82236a1f"
+  },
+  "requests": [
+    {
+      "body": "{\"username\":\"alice\",\"password\":\"correct horse\",\"otp\":\"123456\"}",
+      "body_sha256_hex": "32cc1a4b0061a23aa7437803c0578105d8a5a52d63fd2d7f7aa9546ec6f4f254",
+      "method": "POST",
+      "nonce": "AAECAwQFBgcICQoLDA0ODw",
+      "path": "/api/client/v1/login",
+      "signature": "jxBE7MWICF8th2aS4BbrUBkH_nYHQa2NCOkaPSknyVweXY-lfzzOjdJeukgypnvsDWQjy6tLXehJsLDal6g5BA",
+      "string_to_sign": "hifaz-client-v1\nPOST\n/api/client/v1/login\n2026-11-07T10:00:00Z\nAAECAwQFBgcICQoLDA0ODw\n32cc1a4b0061a23aa7437803c0578105d8a5a52d63fd2d7f7aa9546ec6f4f254",
+      "time": "2026-11-07T10:00:00Z"
+    },
+    {
+      "body": "",
+      "body_sha256_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "method": "GET",
+      "nonce": "EBESExQVFhcYGRobHB0eHw",
+      "path": "/api/client/v1/session?wait=50",
+      "signature": "NTZNv_jkcr5j7pODSS3rY1yiX7mnrFxTvLmdF-9SfoxixHa1p0zR5DPds9R1gsvZfJzEw0392fztH4_vyLRSCQ",
+      "string_to_sign": "hifaz-client-v1\nGET\n/api/client/v1/session?wait=50\n2026-11-07T10:00:30Z\nEBESExQVFhcYGRobHB0eHw\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "time": "2026-11-07T10:00:30Z"
+    }
+  ],
+  "sealed_psk": {
+    "device_id": "d_test0001",
+    "ephemeral_private_key": "XTz0i8bAzGaMnvvlDy5rlRovJmITQ759tK9ZY3hr5D4=",
+    "ephemeral_public_key": "IWUIFMYPxGmZoOEeD7i1xx4Cgt3O5jUlpGeT/HVyHV0=",
+    "key_hex": "fb319e6beb8786bbdef2f2d938d3f64d1eda8c50d23387cd41383a8a6042ed06",
+    "psk": "8jdqhmQNl1wUxgIS/cW5Tg41b+6/OpRzvYddEkFqgTQ=",
+    "psk_sealed": "IWUIFMYPxGmZoOEeD7i1xx4Cgt3O5jUlpGeT/HVyHV2oWMBlhEKy26pbh+o/SJV4Sq67CrPKv/ObRog25RnOijqigI/LrVv2rQ36wch6DPI=",
+    "shared_hex": "41771ead069cf0cefcdeae6079dfd58abe170aabf04479fcadb307e41f48d164",
+    "wg_private_key": "+AkZ2oYEWznPKL7agrygGt8P8xZSyqnEDSKUDkxskmw=",
+    "wg_public_key": "mkk2/n0976hg+yS1HkmS3Jr4EphDhzmX+vOZ02alXlY="
+  },
+  "signed_document": {
+    "document": {
+      "key_id": "Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q",
+      "payload": "eyJ0eXBlIjoic2Vzc2lvbiIsInNlcnZlciI6Imh0dHBzOi8vdnBuLmV4YW1wbGUuY29tIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMDowMDowMFoiLCJub25jZSI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHciLCJzdGF0dXMiOiJjb25uZWN0ZWQifQ",
+      "signature": "5vv8uxUFymZ-PD5Kz3aCZdXRQrF37A_vrXWoq6yhdLsfXy3rplU_EGRcDt747IYXpX3TKW-3YrWVhLe7WOqMCQ"
+    },
+    "payload_json": "{\"type\":\"session\",\"server\":\"https://vpn.example.com\",\"issued_at\":\"2026-11-07T10:00:00Z\",\"nonce\":\"AAECAwQFBgcICQoLDA0ODw\",\"status\":\"connected\"}"
+  },
+  "version": 1
+}

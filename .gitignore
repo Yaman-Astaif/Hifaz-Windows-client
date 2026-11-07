@@ -1,0 +1,8 @@
+/build/
+/dist/
+*.exe
+*.msi
+*.wixobj
+*.wixpdb
+# wireguard.dll is downloaded and checked by scripts/fetch-wireguard-nt.ps1
+/third_party/wireguard-nt/bin/
