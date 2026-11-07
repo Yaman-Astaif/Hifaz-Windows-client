@@ -70,12 +70,9 @@ func run() int {
 	defer service.Close()
 
 	prefsPath := filepath.Join(dir, "settings.json")
-	if _, err := os.Stat(prefsPath); os.IsNotExist(err) { // first start: start with Windows by default
-		prefs := winui.DefaultPrefs()
-		if err := winui.SetAutostart(prefs.Autostart); err != nil {
-			log.Warn("enabling start with Windows", "err", err)
-		}
-		winui.SavePrefs(prefsPath, prefs)
+	background := len(os.Args) > 1 && os.Args[1] == winui.BackgroundFlag
+	if background && !winui.LoadPrefs(prefsPath).Autostart {
+		return 0 // started with Windows, but this user turned that off
 	}
 
 	ctrl := app.New(app.Options{
@@ -95,9 +92,8 @@ func run() int {
 
 	err = winui.Run(winui.Options{
 		Controller: ctrl, Files: ui.Files, PrefsPath: prefsPath,
-		DataDir:      filepath.Join(dir, "WebView2"),
-		Background:   len(os.Args) > 1 && os.Args[1] == winui.BackgroundFlag,
-		SetAutostart: winui.SetAutostart, Log: logFn,
+		DataDir:    filepath.Join(dir, "WebView2"),
+		Background: background, Log: logFn,
 	})
 	cancel()
 	<-done

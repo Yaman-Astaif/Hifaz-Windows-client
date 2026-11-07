@@ -404,12 +404,6 @@ func (h *windowHost) pushApp() {
 }
 
 func (h *windowHost) setPrefs(p Prefs) {
-	if p.Autostart != h.prefs.Autostart && h.o.SetAutostart != nil {
-		if err := h.o.SetAutostart(p.Autostart); err != nil {
-			h.o.Log("changing start with Windows failed", "err", err)
-			p.Autostart = h.prefs.Autostart
-		}
-	}
 	h.prefs = p
 	if err := SavePrefs(h.o.PrefsPath, p); err != nil {
 		h.o.Log("saving preferences failed", "err", err)

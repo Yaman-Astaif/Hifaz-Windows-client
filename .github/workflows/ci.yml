@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that runs anywhere: format, vet (Linux and both Windows
+  # architectures), all tests with the race detector, cross-builds.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Format, vet, test, build
+        run: make check
+
+  # The Windows-only code for real: the pipe, DPAPI, a WireGuardNT adapter
+  # with routes and the DNS rule, and an installer to try in a test VM.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Tests
+        run: go test ./...
+      - name: Fetch and check WireGuardNT
+        shell: pwsh
+        run: scripts\fetch-wireguard-nt.ps1 -Out build\wireguard-nt
+      - name: Tunnel test (real adapter, routes, DNS rule)
+        shell: pwsh
+        run: |
+          go test -c -o build\tunnel-test\tunnel.test.exe .\internal\tunnel
+          Copy-Item build\wireguard-nt\sdk\wireguard-nt\bin\amd64\wireguard.dll build\tunnel-test\
+          $env:HIFAZ_TUNNEL_TEST = "1"
+          build\tunnel-test\tunnel.test.exe -test.v -test.run TestTunnelUpDown
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Build the installer (x64)
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          scripts\build.ps1 -Version 0.0.${{ github.run_number }} -Arch x64
+      - uses: actions/upload-artifact@v5
+        with:
+          name: hifaz-msi-test
+          path: dist/*.msi*
+          retention-days: 14

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hifaz for Windows installer (WiX Toolset 5, schema v4).
+
+  Built by scripts/build.ps1:
+    wix build installer/hifaz.wxs -arch x64|arm64 -d Version=X.Y.Z -d BinDir=<folder> -o Hifaz-X.Y.Z-x64.msi
+
+  Installs for the whole computer (needs admin once):
+    Program Files\Hifaz\hifaz.exe          the app (runs as each user)
+    Program Files\Hifaz\hifaz-service.exe  the Hifaz service (LocalSystem)
+    Program Files\Hifaz\wireguard.dll      WireGuardNT, unmodified
+    Program Files\Hifaz\licenses\          licence texts
+  and a Start menu entry and one start-up entry for all users. Removing
+  Hifaz runs "hifaz-service.exe cleanup" first (not on upgrades), which
+  removes the adapter, DNS rule, driver if unused, and all Hifaz data.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Hifaz"
+           Manufacturer="Yaman Astaif"
+           Version="$(Version)"
+           UpgradeCode="{24EDBD8D-A9D4-48FB-8FDF-A9C7C57DC5B5}"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+    <SummaryInformation Description="Hifaz - حِفاظ" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Hifaz is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- WireGuardNT needs Windows 10 or later. -->
+    <Launch Condition="Installed OR WINDOWSBUILDNUMBER &gt;= 10240"
+            Message="Hifaz needs Windows 10 or later." />
+
+    <Property Id="ARPCONTACT" Value="Yaman Astaif" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Hifaz">
+
+        <Component Id="App">
+          <File Id="AppExe" Source="$(BinDir)\hifaz.exe" KeyPath="yes" />
+        </Component>
+
+        <Component Id="Service">
+          <File Id="ServiceExe" Source="$(BinDir)\hifaz-service.exe" KeyPath="yes" />
+          <ServiceInstall Id="HifazService"
+                          Name="Hifaz"
+                          DisplayName="Hifaz"
+                          Description="Brings the Hifaz tunnel up and down for the Hifaz app."
+                          Type="ownProcess"
+                          Start="auto"
+                          ErrorControl="normal"
+                          Account="LocalSystem"
+                          Vital="yes">
+            <ServiceDependency Id="Nsi" />
+            <ServiceDependency Id="TcpIp" />
+            <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+              <Failure Action="restartService" Delay="5000" />
+              <Failure Action="restartService" Delay="5000" />
+              <Failure Action="restartService" Delay="60000" />
+            </ServiceConfigFailureActions>
+          </ServiceInstall>
+          <ServiceControl Id="HifazServiceControl" Name="Hifaz" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+
+        <Component Id="WireGuardNT">
+          <File Id="WireGuardDll" Source="$(BinDir)\wireguard.dll" KeyPath="yes" />
+        </Component>
+
+        <!-- One start-up entry for every user; each user can turn it off in
+             the app's settings, which makes that start a no-op. -->
+        <Component Id="StartUp">
+          <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Hifaz"
+                         Type="string" Value="&quot;[INSTALLFOLDER]hifaz.exe&quot; --background" KeyPath="yes" />
+        </Component>
+
+        <Directory Id="LicensesFolder" Name="licenses">
+          <Component Id="Licenses">
+            <File Id="NoticeTxt" Source="$(BinDir)\licenses\THIRD-PARTY-NOTICES.txt" KeyPath="yes" />
+            <File Id="WireGuardNTLicense" Source="$(BinDir)\licenses\wireguard-nt-LICENSE.txt" />
+            <File Id="CopyrightTxt" Source="$(BinDir)\licenses\COPYRIGHT.txt" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu">
+        <Shortcut Id="AppShortcut" Name="Hifaz" Description="Hifaz - حِفاظ"
+                  Target="[INSTALLFOLDER]hifaz.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="Software\Hifaz" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- On removal (not on upgrade): clean up after the service has stopped
+         and before its files are deleted. -->
+    <CustomAction Id="Cleanup" FileRef="ServiceExe" ExeCommand="cleanup"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="Cleanup" After="StopServices"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <Feature Id="Main" Title="Hifaz">
+      <ComponentRef Id="App" />
+      <ComponentRef Id="Service" />
+      <ComponentRef Id="WireGuardNT" />
+      <ComponentRef Id="StartUp" />
+      <ComponentRef Id="Licenses" />
+      <ComponentRef Id="StartMenu" />
+    </Feature>
+  </Package>
+</Wix>

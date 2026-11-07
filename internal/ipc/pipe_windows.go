@@ -48,8 +48,12 @@ type Listener struct {
 // Listen creates the pipe. The first instance is created with
 // FILE_FLAG_FIRST_PIPE_INSTANCE, so Listen fails if anyone else already
 // created a pipe of that name.
-func Listen(name string) (*Listener, error) {
-	sd, err := windows.SecurityDescriptorFromString(pipeSDDL)
+func Listen(name string) (*Listener, error) { return listen(name, pipeSDDL) }
+
+// listen creates the pipe with the given security descriptor (tests use
+// one a non-SYSTEM process may set).
+func listen(name, sddl string) (*Listener, error) {
+	sd, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +157,15 @@ func (l *Listener) Close() error {
 // The service may identify the app but cannot act as it
 // (SECURITY_IDENTIFICATION).
 func Dial(name string, timeout time.Duration) (*Conn, error) {
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return nil, err
+	}
+	return dial(name, timeout, system)
+}
+
+// dial connects and checks that the pipe's owner is owner.
+func dial(name string, timeout time.Duration, owner *windows.SID) (*Conn, error) {
 	path, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, err
@@ -162,7 +175,7 @@ func Dial(name string, timeout time.Duration) (*Conn, error) {
 		h, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil,
 			windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED|windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 		if err == nil {
-			if err := checkServerOwner(h); err != nil {
+			if err := checkServerOwner(h, owner); err != nil {
 				windows.CloseHandle(h)
 				return nil, err
 			}
@@ -186,7 +199,7 @@ func Dial(name string, timeout time.Duration) (*Conn, error) {
 // ErrNotService means the pipe does not belong to SYSTEM.
 var ErrNotService = errors.New("ipc: the pipe does not belong to the Hifaz service")
 
-func checkServerOwner(h windows.Handle) error {
+func checkServerOwner(h windows.Handle, want *windows.SID) error {
 	sd, err := windows.GetSecurityInfo(h, windows.SE_KERNEL_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return err
@@ -195,11 +208,7 @@ func checkServerOwner(h windows.Handle) error {
 	if err != nil {
 		return err
 	}
-	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if err != nil {
-		return err
-	}
-	if owner == nil || !owner.Equals(system) {
+	if owner == nil || !owner.Equals(want) {
 		return ErrNotService
 	}
 	return nil

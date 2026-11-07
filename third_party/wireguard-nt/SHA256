@@ -1,0 +1,5 @@
+# SHA-256 of wireguard-nt-1.1.zip from download.wireguard.com.
+# Release builds refuse to run until it is set. To set it: run
+# scripts\fetch-wireguard-nt.ps1 on a trusted Windows machine; it checks that
+# both DLLs are signed by WireGuard LLC and prints the hash. Put the hash on
+# the next line (and nothing else that is not a comment).

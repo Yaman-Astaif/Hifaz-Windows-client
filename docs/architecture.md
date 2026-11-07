@@ -1,0 +1,83 @@
+# Architecture and security model
+
+## Parts and trust
+
+```
+ user (no admin)                         system
+┌──────────────────────────┐   pipe   ┌──────────────────────────────┐
+│ hifaz.exe                │◄────────►│ hifaz-service.exe (SYSTEM)   │
+│  window (WebView2), tray │          │  engine: nonces, identities, │
+│  keystore (DPAPI)        │          │  policy, one tunnel          │
+│  protocol client ────────┼──HTTPS──►│  WireGuardNT (wireguard.dll) │
+└──────────────────────────┘  server  └──────────────────────────────┘
+```
+
+- The **app** holds the user's keys and talks to the server. It verifies
+  every signed document against the server fingerprint pinned at
+  enrollment.
+- The **service** owns the adapter. It trusts nothing the app says by
+  itself: it applies a configuration only from a document signed by the
+  server identity *the same Windows user* recorded at enrollment, answering
+  a nonce *the service* gave *that user*, and allowed by the machine policy.
+- The **server** is identified by its Ed25519 identity key, not by TLS
+  alone (TLS usually ends at a reverse proxy).
+
+## What each check stops
+
+| Threat | Stopped by |
+|---|---|
+| A copied config file used elsewhere | There is none: keys are made on the device and never leave it. Sign-in needs the device key. |
+| A proxy that ends TLS reads the preshared key | The PSK is sealed to the device's WireGuard key (protocol Appendix A). |
+| A fake server behind a valid TLS certificate | Every document is checked against the pinned identity; links carry the fingerprint. |
+| Replaying an old server answer to the service | Nonces are issued by the service per Windows user, used once, valid 10 minutes; answers must be fresh. |
+| Another Windows user using my device | Keys are sealed with DPAPI for my account; the service records server identities per user SID. |
+| Another Windows user taking over or ending my tunnel | The tunnel belongs to the connection that opened it; others get "busy" and see no details. |
+| A user creating a fake pipe to steal keys | The app checks the pipe belongs to SYSTEM before sending anything. Users cannot add instances to the real pipe (no FILE_CREATE_PIPE_INSTANCE). The service creates it with FILE_FLAG_FIRST_PIPE_INSTANCE. |
+| The service acting as the app's user | The app connects at identification level: the service can see who it is, not act as them. |
+| Remote access to the pipe | Remote clients rejected; network logons denied. |
+| A server routing all traffic without the administrator's consent | Full tunnels (however split) are refused unless the policy allows them. |
+| Planting files where the service writes | Service data is in `Program Files\Hifaz\Data` (users cannot create anything there beforehand), with a protected ACL; links are refused. |
+| Uninstall deleting the wrong folder | Per-user folders that are links are removed as links only. |
+| Script injection in the window | The page sets text only, never HTML; strict CSP; no external content; dev tools, context menu and password autosave off. |
+
+Limits, stated plainly:
+
+- DPAPI does not protect against other programs running **as the same
+  user**. A TPM-backed key is the later step.
+- A local user can enroll with a server of their choosing; the policy's
+  server list is how an administrator prevents that.
+- Up to 64 connections to the service at once, not per user.
+
+## Session lifecycle
+
+1. **Enroll**: paste link → info (fingerprint check) → password (+MFA setup)
+   → keys made on the device → `enroll/finish` with a service nonce → the
+   service records the identity from the signed answer → keys sealed.
+2. **Sign in**: service nonce → `login` (signed by the device key) → OTP if
+   asked → signed session document → the service checks it and brings the
+   adapter up with the keys the app hands it (wiped from memory on
+   disconnect).
+3. **Follow**: long-poll `session` with the configuration version in use;
+   every answer goes to the service, which applies a newer configuration
+   or takes the tunnel down when the session ended.
+4. **Renew**: after `renew_after`, new WireGuard and device keys; the tunnel
+   keeps the old ones until the next sign-in.
+5. **End**: sign-out, idle, time limit, the app closing, or the Windows
+   session ending all take the tunnel down.
+
+## Coexistence
+
+- Own adapter (`Hifaz`, fixed GUID) next to any WireGuard or other VPN
+  adapters. The driver skips its own interface when it routes to the
+  server, so no extra host route is needed.
+- Routes only for `allowed_ips`.
+- DNS: split tunnel uses one NRPT rule (fixed key) for the server's search
+  domains only; the interface gets no DNS servers. Full tunnel sets the
+  interface DNS and a rule for all names. If Group Policy sets NRPT rules,
+  Windows ignores local ones; the service logs it rather than writing into
+  the policy area.
+- No firewall rules, no kill switch, no keepalive (sessions must be able to
+  go idle).
+- Uninstall removes the adapter, the rule, the driver if no other program
+  uses it (the WireGuard app reinstalls it when it needs it), the service
+  data and every user's Hifaz folder.
