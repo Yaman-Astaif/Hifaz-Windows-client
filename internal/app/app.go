@@ -599,8 +599,9 @@ func (c *Controller) follow(ctx context.Context, s *session) {
 			c.post(func() { c.sessionLost(s, errServiceUnavailable) })
 			return
 		}
+		signer := s.signer.Load()
 		pctx, cancel := context.WithTimeout(ctx, pollTimeout)
-		doc, raw, err := s.client.Session(pctx, protocol.Auth{Signer: s.signer.Load(), Nonce: nonce, SessionToken: s.token},
+		doc, raw, err := s.client.Session(pctx, protocol.Auth{Signer: signer, Nonce: nonce, SessionToken: s.token},
 			pollWait, s.version.Load())
 		cancel()
 		if ctx.Err() != nil {
@@ -608,6 +609,9 @@ func (c *Controller) follow(ctx context.Context, s *session) {
 		}
 		if err != nil {
 			code := protocol.ErrorCode(err)
+			if code == protocol.ErrCodeInvalidSignature && s.signer.Load() != signer {
+				continue // signed with the old key while it was being renewed: again with the new one
+			}
 			if code == protocol.ErrCodeInvalidSession || code == protocol.ErrCodeInvalidSignature {
 				c.post(func() { c.sessionLost(s, err) })
 				return
@@ -774,6 +778,12 @@ func (c *Controller) renew(s *session, account *keystore.Account) (*keystore.Acc
 	if err != nil {
 		return nil, err
 	}
+	// The server now knows only the new device key: sign with it at once.
+	signer, err := protocol.NewKeySigner(account.DeviceID, ed25519.NewKeyFromSeed(devPriv.Seed()))
+	if err != nil {
+		return nil, err
+	}
+	s.signer.Store(signer)
 	psk, err := protocol.OpenSealedPSK(renewed.PSKSealed, wgPriv, account.DeviceID)
 	if err != nil {
 		return nil, err
@@ -786,11 +796,6 @@ func (c *Controller) renew(s *session, account *keystore.Account) (*keystore.Acc
 	if err != nil {
 		return nil, err
 	}
-	signer, err := protocol.NewKeySigner(account.DeviceID, ed25519.NewKeyFromSeed(devPriv.Seed()))
-	if err != nil {
-		return nil, err
-	}
-	s.signer.Store(signer)
 	c.o.Log("keys renewed", "expire", account.KeysExpireAt)
 	return saved, nil
 }
