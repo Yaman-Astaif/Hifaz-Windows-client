@@ -121,7 +121,7 @@ func viewError(err error) *ViewError {
 	var netErr net.Error
 	var urlErr *url.Error
 	switch {
-	case errors.Is(err, errServiceUnavailable):
+	case errors.Is(err, errServiceUnavailable), errors.Is(err, ipc.ErrUnavailable):
 		return &ViewError{Code: ErrServiceUnavailable}
 	case errors.Is(err, protocol.ErrIdentityMismatch):
 		return &ViewError{Code: ErrIdentityMismatch}

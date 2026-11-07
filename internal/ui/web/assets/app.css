@@ -1,0 +1,40 @@
+/* App-only additions to style.css. */
+
+/* The window is the page: no scroll bar unless the content needs one. */
+body { min-height: 100vh; }
+main { max-width: 440px; }
+h2 { font: 700 16px/1.4 "WG Heading", "WG Body", sans-serif; color: var(--heading); margin: 22px 0 10px; }
+.center { text-align: center; }
+.start { text-align: start; }
+.hint.start { margin: 0 0 14px; }
+
+/* The logo slot: kept empty on purpose (a place for a logo, no logo). */
+.logo-slot { display: inline-block; width: 34px; height: 34px; flex: none; }
+.logo-slot.large { width: 72px; height: 72px; margin: 0 auto 8px; display: block; }
+
+/* Status messages above the screens. */
+#error, #notice { margin-bottom: 16px; }
+
+/* Fingerprint to compare: large, grouped, left-to-right. */
+.fp { font-size: 18px; letter-spacing: .08em; overflow-wrap: anywhere; }
+
+/* Routes can be a long list. */
+dd.routes { white-space: pre-line; font-weight: 600; }
+
+/* Settings. */
+label.inline { justify-content: space-between; }
+label.inline.check { justify-content: flex-start; font-weight: 600; }
+label.inline.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.btn.danger { color: var(--err); border-color: var(--err); }
+.btn.danger:hover { background: var(--err-bg); }
+.btn.back { margin-top: 16px; }
+
+/* About. */
+.about { text-align: center; }
+.about .brand-name { display: block; color: var(--heading); font-size: 22px; margin: 0 0 4px; }
+.about dl { text-align: start; margin-top: 12px; }
+.credits { text-align: start; margin: 0 0 12px; padding-inline-start: 20px; font-size: 13.5px; color: var(--muted); }
+.credits li { margin-bottom: 4px; }
+
+/* Busy: the form waits for the app. */
+body.busy .btn { opacity: .6; cursor: progress; pointer-events: none; }
