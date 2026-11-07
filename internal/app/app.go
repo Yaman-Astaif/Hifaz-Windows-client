@@ -54,6 +54,7 @@ const (
 	retryMin     = 2 * time.Second
 	retryMax     = 30 * time.Second
 	statsRefresh = 5 * time.Second
+	renewTimeout = 10 * time.Second
 )
 
 // Controller runs the app. All state is owned by one goroutine (Run);
@@ -733,28 +734,25 @@ func (c *Controller) endSession(logout bool, reason string) {
 // --- key renewal ------------------------------------------------------------------
 
 // maybeRenew renews the keys once per session when the server allows it.
+// It runs on the controller goroutine, so no sign-in or other action can
+// come between the server accepting the new keys and the app using them;
+// it happens once every few months, right after sign-in.
 func (c *Controller) maybeRenew(s *session) {
 	if s.renewed || s.doc.RenewAfter.IsZero() || c.o.Now().Before(s.doc.RenewAfter) {
 		return
 	}
 	s.renewed = true
 	account := *c.account
-	go func() {
-		saved, err := c.renew(s, &account)
-		c.post(func() {
-			if err != nil {
-				c.o.Log("renewing the keys failed; will try again next session", "err", err)
-				return
-			}
-			if c.account != nil && c.account.Server == saved.Server {
-				c.account = saved
-				if c.view.Screen == ScreenConnected {
-					c.view.Account = accountView(c.account)
-					c.show()
-				}
-			}
-		})
-	}()
+	saved, err := c.renew(s, &account)
+	if err != nil {
+		c.o.Log("renewing the keys failed; will try again next session", "err", err)
+		return
+	}
+	c.account = saved
+	if c.view.Screen == ScreenConnected {
+		c.view.Account = accountView(c.account)
+		c.show()
+	}
 }
 
 // renew makes new keys, registers them, and saves them. The tunnel keeps the
@@ -771,7 +769,7 @@ func (c *Controller) renew(s *session, account *keystore.Account) (*keystore.Acc
 		return nil, err
 	}
 	defer clear(devPriv)
-	ctx, cancel := c.ctx()
+	ctx, cancel := context.WithTimeout(context.Background(), renewTimeout)
 	defer cancel()
 	renewed, _, err := s.client.Renew(ctx, protocol.Auth{Signer: s.signer.Load(), Nonce: mustNonce()}, protocol.RenewRequest{
 		WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub)})

@@ -332,7 +332,8 @@ func (c *Conn) Close() error {
 		}
 		break
 	}
-	windows.DisconnectNamedPipe(c.h) // fails harmlessly on the client end
+	// No DisconnectNamedPipe: it would throw away a reply the other end has
+	// not read yet. Closing the handle keeps it readable, then ends the pipe.
 	err := windows.CloseHandle(c.h)
 	c.closeEvents()
 	return err
