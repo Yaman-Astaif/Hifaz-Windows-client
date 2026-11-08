@@ -32,6 +32,8 @@ type Options struct {
 	Now func() time.Time
 	// UserAgent names the app, for example "Hifaz-Windows/0.1.0".
 	UserAgent string
+	// App is the Hifaz-App header, "<platform>/<version>" (section 3).
+	App string
 }
 
 // Client talks to one Hifaz server. Once its pin is set, it is safe for
@@ -42,19 +44,25 @@ type Client struct {
 	http      *http.Client
 	now       func() time.Time
 	userAgent string
+	app       string
 }
 
 // NewHTTPClient returns the HTTP client the protocol needs: TLS 1.2 or
 // newer with the system's trust store, and no redirects (the API never
 // redirects, and following one could leave the pinned server). proxy picks
-// a proxy per request; nil means none.
-func NewHTTPClient(proxy func(*http.Request) (*url.URL, error)) *http.Client {
+// a proxy per request; nil means none. cert, if set, is the device
+// certificate, presented when the server's proxy asks for one.
+func NewHTTPClient(proxy func(*http.Request) (*url.URL, error), cert *tls.Certificate) *http.Client {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	tc := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cert != nil {
+		tc.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert, nil }
+	}
 	return &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 proxy,
 			DialContext:           dialer.DialContext,
-			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+			TLSClientConfig:       tc,
 			TLSHandshakeTimeout:   15 * time.Second,
 			ExpectContinueTimeout: time.Second,
 			IdleConnTimeout:       90 * time.Second,
@@ -72,9 +80,9 @@ func NewClient(publicURL string, pin Pin, opts Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{server: server, pin: pin, http: opts.HTTPClient, now: opts.Now, userAgent: opts.UserAgent}
+	c := &Client{server: server, pin: pin, http: opts.HTTPClient, now: opts.Now, userAgent: opts.UserAgent, app: opts.App}
 	if c.http == nil {
-		c.http = NewHTTPClient(nil)
+		c.http = NewHTTPClient(nil, nil)
 	}
 	if c.now == nil {
 		c.now = time.Now
@@ -208,11 +216,14 @@ type Auth struct {
 	SessionToken string
 }
 
-// LoginRequest is the body of a sign-in.
+// LoginRequest is the body of a sign-in. WGPublicKey is the WireGuard key
+// the app will use: after a renewal it tells the server the new keys are in
+// use (section 8).
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	OTP      string `json:"otp,omitempty"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	OTP         string `json:"otp,omitempty"`
+	WGPublicKey string `json:"wg_public_key,omitempty"`
 }
 
 // LoginResult is either a session or a request for the MFA code.
@@ -340,6 +351,9 @@ func (c *Client) call(ctx context.Context, method, path string, body any, auth *
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
+	if c.app != "" {
+		req.Header.Set(HeaderApp, c.app)
+	}
 	if auth != nil {
 		if auth.Signer == nil {
 			return errors.New("signed call without a signer")
@@ -367,6 +381,9 @@ func (c *Client) call(ctx context.Context, method, path string, body any, auth *
 		e := &APIError{Status: res.StatusCode}
 		if json.Unmarshal(data, e) != nil || e.Code == "" {
 			e.Code, e.Message = "http_"+strconv.Itoa(res.StatusCode), ""
+		}
+		if e.RetryAfter == 0 {
+			e.RetryAfter, _ = strconv.Atoi(res.Header.Get("Retry-After"))
 		}
 		return e
 	}

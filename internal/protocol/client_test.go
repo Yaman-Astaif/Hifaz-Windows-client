@@ -196,8 +196,9 @@ func TestSignedRequestChecks(t *testing.T) {
 	}
 }
 
-func TestRenewReplacesKeys(t *testing.T) {
+func TestRenewKeepsOldKeysUntilUsed(t *testing.T) {
 	srv := fakeserver.New(t, fakeserver.Options{})
+	srv.SetRenewAfter(-time.Hour)
 	srv.AddUser("alice", "pw", false)
 	c, dev := enroll(t, srv, "alice")
 	ctx := context.Background()
@@ -209,17 +210,88 @@ func TestRenewReplacesKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if renewed.RenewAfter.IsZero() {
+		t.Fatal("renewed answer has no renew_after")
+	}
 	psk, err := protocol.OpenSealedPSK(renewed.PSKSealed, wgPriv, dev.signer.DeviceID())
-	if err != nil || psk != srv.Device(dev.signer.DeviceID()).PSK {
+	if err != nil || psk != srv.Device(dev.signer.DeviceID()).NextPSK {
 		t.Fatalf("renewed psk: %v", err)
 	}
 	login := protocol.LoginRequest{Username: "alice", Password: "pw", OTP: fakeserver.OTP}
-	if _, err := c.Login(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t)}, login); protocol.ErrorCode(err) != protocol.ErrCodeInvalidSignature {
-		t.Fatalf("old device key still accepted: %v", err)
+
+	// Until the new device key is used, the old one still works (a crash
+	// before the new keys were saved must not lock the device out).
+	if _, err := c.Login(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t)}, login); err != nil {
+		t.Fatalf("old device key refused before the new one was used: %v", err)
 	}
+	// Signing in with the new device key and the new WireGuard key adopts both.
 	signer, _ := protocol.NewKeySigner(dev.signer.DeviceID(), newPriv)
+	login.WGPublicKey = wgPub.String()
 	if _, err := c.Login(ctx, protocol.Auth{Signer: signer, Nonce: nonce(t)}, login); err != nil {
-		t.Fatalf("new device key: %v", err)
+		t.Fatalf("new keys: %v", err)
+	}
+	if d := srv.Device(dev.signer.DeviceID()); d.PSK != psk || !d.NextWGPublicKey.IsZero() {
+		t.Fatal("renewed keys not adopted")
+	}
+	login.WGPublicKey = ""
+	if _, err := c.Login(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t)}, login); protocol.ErrorCode(err) != protocol.ErrCodeInvalidSignature {
+		t.Fatalf("old device key still accepted after the new one was used: %v", err)
+	}
+	// An unknown WireGuard key is refused.
+	_, other, _ := protocol.GenerateWireGuardKey()
+	login.WGPublicKey = other.String()
+	if _, err := c.Login(ctx, protocol.Auth{Signer: signer, Nonce: nonce(t)}, login); protocol.ErrorCode(err) != protocol.ErrCodeUnknownDevice {
+		t.Fatalf("unknown WireGuard key: %v", err)
+	}
+}
+
+func TestRenewNotDue(t *testing.T) {
+	srv := fakeserver.New(t, fakeserver.Options{})
+	srv.AddUser("alice", "pw", false)
+	c, dev := enroll(t, srv, "alice")
+	_, wgPub, _ := protocol.GenerateWireGuardKey()
+	_, _, err := c.Renew(context.Background(), protocol.Auth{Signer: dev.signer, Nonce: nonce(t)}, protocol.RenewRequest{WGPublicKey: wgPub.String()})
+	if protocol.ErrorCode(err) != protocol.ErrCodeRenewNotDue {
+		t.Fatalf("early renewal: %v", err)
+	}
+}
+
+func TestAppHeaderAndRetryAfter(t *testing.T) {
+	srv := fakeserver.New(t, fakeserver.Options{})
+	srv.AddUser("alice", "pw", false)
+	_, dev := enroll(t, srv, "alice")
+	srv.SetMinAppVersion("0.2.0")
+	old, _ := protocol.NewClient(srv.URL(), srv.Pin(), protocol.Options{HTTPClient: srv.HTTPClient(), App: "windows/0.1.0"})
+	if _, err := old.Info(context.Background()); err != nil {
+		t.Fatalf("info must stay open to old apps: %v", err)
+	}
+	var apiErr *protocol.APIError
+	_, err := old.Login(context.Background(), protocol.Auth{Signer: dev.signer, Nonce: nonce(t)},
+		protocol.LoginRequest{Username: "alice", Password: "pw", OTP: fakeserver.OTP})
+	if !errors.As(err, &apiErr) || apiErr.Code != protocol.ErrCodeAppTooOld || apiErr.MinVersion != "0.2.0" {
+		t.Fatalf("old app: %v", err)
+	}
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(429)
+		w.Write([]byte(`{"error":"rate_limited"}`))
+	}))
+	defer ts.Close()
+	hc := protocol.NewHTTPClient(nil, nil)
+	hc.Transport.(*http.Transport).TLSClientConfig.RootCAs = ts.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c, _ := protocol.NewClient(ts.URL, protocol.Pin{}, protocol.Options{HTTPClient: hc})
+	if _, err := c.EnrollInfo(context.Background(), "x"); !errors.As(err, &apiErr) || apiErr.RetryAfter != 42 {
+		t.Fatalf("retry after: %v", err)
+	}
+}
+
+func TestCertificateRequest(t *testing.T) {
+	key, csr, err := protocol.NewCertificateRequest()
+	if err != nil || len(key) == 0 || len(csr) == 0 {
+		t.Fatal(err)
+	}
+	if _, err := protocol.ClientCertificate([]byte("not a certificate"), key); err == nil {
+		t.Fatal("garbage certificate accepted")
 	}
 }
 
@@ -264,7 +336,7 @@ func TestNoRedirectsAndLimits(t *testing.T) {
 		w.Write([]byte(`{"x":"` + big + `"}`))
 	}))
 	defer ts.Close()
-	hc := protocol.NewHTTPClient(nil)
+	hc := protocol.NewHTTPClient(nil, nil)
 	hc.Transport.(*http.Transport).TLSClientConfig.RootCAs = ts.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 	c, _ := protocol.NewClient(ts.URL, protocol.Pin{}, protocol.Options{HTTPClient: hc})
 	if _, _, err := c.FetchIdentity(context.Background()); protocol.ErrorCode(err) != "http_302" {

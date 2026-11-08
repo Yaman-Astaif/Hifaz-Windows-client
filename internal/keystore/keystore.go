@@ -53,10 +53,23 @@ func (a *Account) Pin() (protocol.Pin, error) {
 
 // Secrets are the device's private keys.
 type Secrets struct {
-	DeviceSeed  []byte       `json:"device_seed"` // Ed25519 seed
-	WGPrivate   protocol.Key `json:"wg_private"`
-	PSK         protocol.Key `json:"psk"`
-	Certificate []byte       `json:"certificate,omitempty"`
+	DeviceSeed []byte       `json:"device_seed"` // Ed25519 seed
+	WGPrivate  protocol.Key `json:"wg_private"`
+	PSK        protocol.Key `json:"psk"`
+	// Certificate groups: the ECDSA P-256 key (PKCS#8) and its certificate
+	// (DER).
+	CertKey     []byte `json:"cert_key,omitempty"`
+	Certificate []byte `json:"certificate,omitempty"`
+	// Pending are renewed WireGuard keys the server has accepted but not yet
+	// seen in use; the next sign-in announces and adopts them (protocol
+	// section 10). Until then the current ones keep working.
+	Pending *PendingKeys `json:"pending,omitempty"`
+}
+
+// PendingKeys are renewed WireGuard keys waiting for the next sign-in.
+type PendingKeys struct {
+	WGPrivate protocol.Key `json:"wg_private"`
+	PSK       protocol.Key `json:"psk"`
 }
 
 // Signer returns a request signer for the device.
@@ -67,11 +80,39 @@ func (s *Secrets) Signer(deviceID string) (*protocol.KeySigner, error) {
 	return protocol.NewKeySigner(deviceID, ed25519.NewKeyFromSeed(s.DeviceSeed))
 }
 
+// TunnelKeys returns the WireGuard keys the next sign-in uses: the pending
+// ones if there are any.
+func (s *Secrets) TunnelKeys() (wgPrivate, psk protocol.Key) {
+	if s.Pending != nil {
+		return s.Pending.WGPrivate, s.Pending.PSK
+	}
+	return s.WGPrivate, s.PSK
+}
+
+// AdoptPending makes the pending keys current, after a sign-in used them.
+func (s *Secrets) AdoptPending() {
+	if s.Pending == nil {
+		return
+	}
+	s.WGPrivate.Wipe()
+	s.PSK.Wipe()
+	s.WGPrivate, s.PSK = s.Pending.WGPrivate, s.Pending.PSK
+	s.Pending = nil
+}
+
+// HasCertificate reports whether the device has a client certificate.
+func (s *Secrets) HasCertificate() bool { return len(s.Certificate) > 0 && len(s.CertKey) > 0 }
+
 // Wipe overwrites the secrets.
 func (s *Secrets) Wipe() {
 	clear(s.DeviceSeed)
 	s.WGPrivate.Wipe()
 	s.PSK.Wipe()
+	clear(s.CertKey)
+	if s.Pending != nil {
+		s.Pending.WGPrivate.Wipe()
+		s.Pending.PSK.Wipe()
+	}
 }
 
 // Store is the accounts file of one Windows user.

@@ -10,7 +10,8 @@ the Hifaz repository), so it works with any Hifaz server from 0.8.0 on.
 Nothing in it is specific to one organisation: no server names, domains or
 settings are built in.
 
-Status: **in development**, not released. Needs Hifaz 0.8.0.
+Status: **in development**, not released. Needs Hifaz 0.8.0
+(`feature/0.8.0`, checked against commit 4ac91af).
 
 ## How it is built
 
@@ -62,6 +63,12 @@ The installer, on Windows (PowerShell, Go, and `dotnet tool install --global wix
 ```powershell
 scripts\build.ps1 -Version 0.1.0                 # dist\Hifaz-0.1.0-x64.msi and -arm64.msi
 scripts\build.ps1 -Version 0.1.0 -Arch x64 -NoMsi
+```
+
+Against the real Hifaz server (any system, with a Hifaz checkout):
+
+```sh
+scripts/interop-hifaz.sh ../Hifaz
 ```
 
 CI (`.github/workflows/ci.yml`) runs `make check` on Linux and, on Windows,

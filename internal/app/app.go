@@ -9,6 +9,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
@@ -37,9 +39,10 @@ type Service interface {
 type Options struct {
 	Store   *keystore.Store
 	Service Service
-	// HTTPClient returns the client for server calls; nil uses the
-	// protocol's default with no proxy.
-	HTTPClient func() *http.Client
+	// HTTPClient returns the client for server calls, presenting cert (the
+	// device certificate, nil if none); nil uses the protocol's default
+	// with no proxy.
+	HTTPClient func(cert *tls.Certificate) *http.Client
 	Now        func() time.Time
 	OSName     string // sent at enrollment, for example "Windows 11 Pro 24H2"
 	OnView     func(View)
@@ -72,12 +75,13 @@ type Controller struct {
 }
 
 type enrollment struct {
-	link      protocol.EnrollLink
-	client    *protocol.Client
-	pin       protocol.Pin
-	info      *protocol.EnrollLinkInfo
-	stepToken string
-	replacing bool
+	link         protocol.EnrollLink
+	client       *protocol.Client
+	pin          protocol.Pin
+	info         *protocol.EnrollLinkInfo
+	stepToken    string
+	certRequired bool
+	replacing    bool
 }
 
 type signinStep struct {
@@ -106,7 +110,7 @@ func New(o Options) *Controller {
 		o.OnView = func(View) {}
 	}
 	if o.HTTPClient == nil {
-		o.HTTPClient = func() *http.Client { return protocol.NewHTTPClient(nil) }
+		o.HTTPClient = func(cert *tls.Certificate) *http.Client { return protocol.NewHTTPClient(nil, cert) }
 	}
 	return &Controller{o: o, actions: make(chan func(), 64), view: View{Screen: ScreenLoading}}
 }
@@ -167,9 +171,9 @@ func (c *Controller) ctx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), callTimeout)
 }
 
-func (c *Controller) newClient(server string, pin protocol.Pin) (*protocol.Client, error) {
-	return protocol.NewClient(server, pin, protocol.Options{HTTPClient: c.o.HTTPClient(), Now: c.o.Now,
-		UserAgent: version.UserAgent()})
+func (c *Controller) newClient(server string, pin protocol.Pin, cert *tls.Certificate) (*protocol.Client, error) {
+	return protocol.NewClient(server, pin, protocol.Options{HTTPClient: c.o.HTTPClient(cert), Now: c.o.Now,
+		UserAgent: version.UserAgent(), App: version.AppHeader()})
 }
 
 // --- start ------------------------------------------------------------------------
@@ -280,7 +284,7 @@ func (c *Controller) enrollLink(raw string) {
 		return
 	}
 	c.setBusy(true)
-	client, err := c.newClient(link.Server, protocol.Pin{Fingerprint: link.Fingerprint})
+	client, err := c.newClient(link.Server, protocol.Pin{Fingerprint: link.Fingerprint}, nil)
 	if err != nil {
 		c.fail(errInvalidLink)
 		return
@@ -356,7 +360,7 @@ func (c *Controller) enrollPassword(password, otp, deviceName string) {
 		c.fail(err)
 		return
 	}
-	e.stepToken = st.StepToken
+	e.stepToken, e.certRequired = st.StepToken, st.CertRequired
 	if st.NeedsMFASetup {
 		v := c.enrollView()
 		v.MFAURI, v.MFASecret = st.MFAURI, st.MFASecret
@@ -410,10 +414,27 @@ func (c *Controller) enrollFinish(ctx context.Context, deviceName string) {
 	if e.info.NameEditable {
 		req.DeviceName = strings.TrimSpace(deviceName)
 	}
+	var certKey []byte
+	if e.certRequired {
+		var csr []byte
+		if certKey, csr, err = protocol.NewCertificateRequest(); err != nil {
+			c.fail(err)
+			return
+		}
+		defer clear(certKey)
+		req.CSR = base64.StdEncoding.EncodeToString(csr)
+	}
 	enrolled, doc, err := e.client.EnrollFinish(ctx, req)
 	if err != nil {
 		c.fail(err)
 		return
+	}
+	var cert []byte
+	if certKey != nil {
+		if cert, err = checkedCertificate(enrolled.Certificate, certKey); err != nil {
+			c.fail(err)
+			return
+		}
 	}
 	psk, err := protocol.OpenSealedPSK(enrolled.PSKSealed, wgPriv, enrolled.DeviceID)
 	if err != nil {
@@ -429,9 +450,10 @@ func (c *Controller) enrollFinish(ctx context.Context, deviceName string) {
 	account := &keystore.Account{
 		Server: e.link.Server, Fingerprint: e.pin.Fingerprint, IdentityKey: identityKey,
 		DeviceID: enrolled.DeviceID, Username: enrolled.Username, DeviceName: enrolled.Device,
-		EnrolledAt: c.o.Now().UTC(), KeysExpireAt: enrolled.KeysExpireAt,
+		EnrolledAt: c.o.Now().UTC(), KeysExpireAt: enrolled.KeysExpireAt, RenewAfter: enrolled.RenewAfter,
 	}
-	secrets := &keystore.Secrets{DeviceSeed: devPriv.Seed(), WGPrivate: wgPriv, PSK: psk}
+	secrets := &keystore.Secrets{DeviceSeed: devPriv.Seed(), WGPrivate: wgPriv, PSK: psk,
+		CertKey: append([]byte(nil), certKey...), Certificate: cert}
 	defer secrets.Wipe()
 	saved, err := c.o.Store.Save(account, secrets)
 	if err != nil {
@@ -444,6 +466,19 @@ func (c *Controller) enrollFinish(ctx context.Context, deviceName string) {
 	c.o.Log("enrolled", "server", account.Server, "device", account.DeviceID)
 	c.account, c.enroll = saved, nil
 	c.setView(View{Screen: ScreenSignIn, Notice: "enrolled"})
+}
+
+// checkedCertificate decodes the certificate the server issued and checks
+// it matches the key the app made for it.
+func checkedCertificate(certB64 string, key []byte) ([]byte, error) {
+	cert, err := base64.StdEncoding.DecodeString(certB64)
+	if err != nil || len(cert) == 0 {
+		return nil, errors.New("the server sent no usable certificate")
+	}
+	if _, err := protocol.ClientCertificate(cert, key); err != nil {
+		return nil, err
+	}
+	return cert, nil
 }
 
 // forget removes an account from the store and the service.
@@ -477,12 +512,20 @@ func (c *Controller) credentials() (*protocol.Client, *keystore.Secrets, *protoc
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	client, err := c.newClient(c.account.Server, pin)
+	sec, err := c.o.Store.Secrets(c.account)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	sec, err := c.o.Store.Secrets(c.account)
+	var cert *tls.Certificate
+	if sec.HasCertificate() {
+		if cert, err = protocol.ClientCertificate(sec.Certificate, sec.CertKey); err != nil {
+			sec.Wipe()
+			return nil, nil, nil, err
+		}
+	}
+	client, err := c.newClient(c.account.Server, pin, cert)
 	if err != nil {
+		sec.Wipe()
 		return nil, nil, nil, err
 	}
 	signer, err := sec.Signer(c.account.DeviceID)
@@ -494,9 +537,9 @@ func (c *Controller) credentials() (*protocol.Client, *keystore.Secrets, *protoc
 }
 
 func (c *Controller) signIn(password, otp string) {
-	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth) (*protocol.LoginResult, error) {
+	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth, wgPublic string) (*protocol.LoginResult, error) {
 		return client.Login(ctx, auth, protocol.LoginRequest{Username: c.account.Username,
-			Password: password, OTP: strings.TrimSpace(otp)})
+			Password: password, OTP: strings.TrimSpace(otp), WGPublicKey: wgPublic})
 	})
 }
 
@@ -505,13 +548,17 @@ func (c *Controller) signInOTP(otp string) {
 	if step == nil {
 		return
 	}
-	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth) (*protocol.LoginResult, error) {
+	// The WireGuard key was announced with the password; the server keeps it
+	// for this step.
+	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth, _ string) (*protocol.LoginResult, error) {
 		return client.LoginOTP(ctx, auth, step.stepToken, strings.TrimSpace(otp))
 	})
 }
 
 // startSession runs one sign-in call and, on success, brings the tunnel up.
-func (c *Controller) startSession(call func(context.Context, *protocol.Client, protocol.Auth) (*protocol.LoginResult, error)) {
+// call gets the public key of the WireGuard key this sign-in uses: the
+// renewed one if a renewal is pending, which the sign-in then adopts.
+func (c *Controller) startSession(call func(context.Context, *protocol.Client, protocol.Auth, string) (*protocol.LoginResult, error)) {
 	if c.session != nil {
 		return
 	}
@@ -524,7 +571,22 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 	defer sec.Wipe()
 	ctx, cancel := c.ctx()
 	defer cancel()
-	if _, err := client.Info(ctx); err != nil {
+	info, err := client.Info(ctx)
+	if err != nil {
+		c.fail(err)
+		return
+	}
+	if err := protocol.CheckCompatible(info, version.Platform, version.Version, version.Compare); err != nil {
+		if protocol.ErrorCode(err) == protocol.ErrCodeAppTooOld {
+			c.showUpdate(info)
+			return
+		}
+		c.fail(err)
+		return
+	}
+	wgPriv, psk := sec.TunnelKeys()
+	wgPub, err := protocol.WireGuardPublicKey(wgPriv)
+	if err != nil {
 		c.fail(err)
 		return
 	}
@@ -533,11 +595,15 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 		c.fail(err)
 		return
 	}
-	res, err := call(ctx, client, protocol.Auth{Signer: signer, Nonce: nonce})
+	res, err := call(ctx, client, protocol.Auth{Signer: signer, Nonce: nonce}, wgPub.String())
 	if err != nil {
 		c.signin = nil
-		if protocol.ErrorCode(err) == protocol.ErrCodeKeysExpired {
+		switch protocol.ErrorCode(err) {
+		case protocol.ErrCodeKeysExpired:
 			c.setView(View{Screen: ScreenSetup, Error: viewError(err), Replacing: true})
+			return
+		case protocol.ErrCodeAppTooOld:
+			c.showUpdate(info)
 			return
 		}
 		c.fail(err)
@@ -553,7 +619,15 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 		return
 	}
 	c.signin = nil
-	st, err := c.o.Service.Connect(c.account.Server, res.Document, sec.WGPrivate, sec.PSK)
+	if sec.Pending != nil { // the server has seen the renewed keys in use
+		sec.AdoptPending()
+		if saved, err := c.o.Store.Save(c.account, sec); err == nil {
+			c.account = saved
+		} else {
+			c.o.Log("saving the adopted keys failed", "err", err)
+		}
+	}
+	st, err := c.o.Service.Connect(c.account.Server, res.Document, wgPriv, psk)
 	if err != nil {
 		// The server session exists but this computer has no tunnel: end it.
 		lctx, lcancel := c.ctx()
@@ -744,6 +818,9 @@ func (c *Controller) maybeRenew(s *session) {
 	s.renewed = true
 	account := *c.account
 	saved, err := c.renew(s, &account)
+	if protocol.ErrorCode(err) == protocol.ErrCodeRenewNotDue {
+		return
+	}
 	if err != nil {
 		c.o.Log("renewing the keys failed; will try again next session", "err", err)
 		return
@@ -755,10 +832,18 @@ func (c *Controller) maybeRenew(s *session) {
 	}
 }
 
-// renew makes new keys, registers them, and saves them. The tunnel keeps the
-// old WireGuard keys until the next sign-in, as the protocol says; the new
-// device key signs from now on.
+// renew makes new keys and registers them. The new WireGuard keys are kept
+// as pending: the tunnel keeps the current ones, and the next sign-in
+// announces and adopts the new ones. The new device key signs once it is
+// saved; the server keeps the old one until the new one is first used
+// (protocol section 10), so a crash at any point leaves the device able to
+// sign in.
 func (c *Controller) renew(s *session, account *keystore.Account) (*keystore.Account, error) {
+	sec, err := c.o.Store.Secrets(account)
+	if err != nil {
+		return nil, err
+	}
+	defer sec.Wipe()
 	wgPriv, wgPub, err := protocol.GenerateWireGuardKey()
 	if err != nil {
 		return nil, err
@@ -769,31 +854,53 @@ func (c *Controller) renew(s *session, account *keystore.Account) (*keystore.Acc
 		return nil, err
 	}
 	defer clear(devPriv)
+	req := protocol.RenewRequest{WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub)}
+	var certKey []byte
+	if sec.HasCertificate() {
+		var csr []byte
+		if certKey, csr, err = protocol.NewCertificateRequest(); err != nil {
+			return nil, err
+		}
+		defer clear(certKey)
+		req.CSR = base64.StdEncoding.EncodeToString(csr)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), renewTimeout)
 	defer cancel()
-	renewed, _, err := s.client.Renew(ctx, protocol.Auth{Signer: s.signer.Load(), Nonce: mustNonce()}, protocol.RenewRequest{
-		WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub)})
+	renewed, _, err := s.client.Renew(ctx, protocol.Auth{Signer: s.signer.Load(), Nonce: mustNonce()}, req)
 	if err != nil {
 		return nil, err
 	}
-	// The server now knows only the new device key: sign with it at once.
+	psk, err := protocol.OpenSealedPSK(renewed.PSKSealed, wgPriv, account.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	clear(sec.DeviceSeed)
+	sec.DeviceSeed = devPriv.Seed()
+	if sec.Pending != nil {
+		sec.Pending.WGPrivate.Wipe()
+		sec.Pending.PSK.Wipe()
+	}
+	sec.Pending = &keystore.PendingKeys{WGPrivate: wgPriv, PSK: psk}
+	if certKey != nil {
+		cert, err := checkedCertificate(renewed.Certificate, certKey)
+		if err != nil {
+			return nil, err
+		}
+		clear(sec.CertKey)
+		sec.CertKey, sec.Certificate = append([]byte(nil), certKey...), cert
+	}
+	account.KeysExpireAt, account.RenewAfter = renewed.KeysExpireAt, renewed.RenewAfter
+	saved, err := c.o.Store.Save(account, sec)
+	if err != nil {
+		return nil, err // the old keys are still saved, and still valid
+	}
+	// Only once the new device key is saved does the app sign with it: its
+	// first use ends the old one on the server.
 	signer, err := protocol.NewKeySigner(account.DeviceID, ed25519.NewKeyFromSeed(devPriv.Seed()))
 	if err != nil {
 		return nil, err
 	}
 	s.signer.Store(signer)
-	psk, err := protocol.OpenSealedPSK(renewed.PSKSealed, wgPriv, account.DeviceID)
-	if err != nil {
-		return nil, err
-	}
-	defer psk.Wipe()
-	account.KeysExpireAt, account.RenewAfter = renewed.KeysExpireAt, renewed.RenewAfter
-	secrets := &keystore.Secrets{DeviceSeed: devPriv.Seed(), WGPrivate: wgPriv, PSK: psk}
-	defer secrets.Wipe()
-	saved, err := c.o.Store.Save(account, secrets)
-	if err != nil {
-		return nil, err
-	}
-	c.o.Log("keys renewed", "expire", account.KeysExpireAt)
+	c.o.Log("keys renewed; the new tunnel keys are used from the next sign-in", "expire", account.KeysExpireAt)
 	return saved, nil
 }

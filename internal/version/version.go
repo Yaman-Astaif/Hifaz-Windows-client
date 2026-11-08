@@ -74,3 +74,6 @@ func parse(v string) ([3]uint64, string, error) {
 	}
 	return out, suffix, nil
 }
+
+// AppHeader is the Hifaz-App header value, for example "windows/0.1.0".
+func AppHeader() string { return Platform + "/" + Version }

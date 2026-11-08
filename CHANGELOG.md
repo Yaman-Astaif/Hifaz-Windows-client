@@ -18,7 +18,12 @@ First version, for Hifaz 0.8.0 (client protocol version 1).
 - Configuration changes apply by themselves; when the session ends (sign
   out, idle, time limit, administrator) the tunnel closes and the window
   says why.
-- Keys are renewed by themselves before they expire.
+- Keys are renewed by themselves when the server asks; the new tunnel keys
+  are used from the next sign-in, and a crash during renewal never locks
+  the device out.
+- Groups that require a device certificate: the app makes its own
+  certificate key, gets the certificate at enrollment and renewal, and
+  presents it when the server's proxy asks.
 
 **App**
 - Arabic and English, right-to-left, light and dark themes, in the style of

@@ -27,6 +27,7 @@
 | Threat | Stopped by |
 |---|---|
 | A copied config file used elsewhere | There is none: keys are made on the device and never leave it. Sign-in needs the device key. |
+| Certificate groups | A separate ECDSA P-256 key made by the app, sealed with the other keys; the certificate is presented in the TLS handshake to the proxy, which checks it and tells Hifaz. |
 | A proxy that ends TLS reads the preshared key | The PSK is sealed to the device's WireGuard key (protocol Appendix A). |
 | A fake server behind a valid TLS certificate | Every document is checked against the pinned identity; links carry the fingerprint. |
 | Replaying an old server answer to the service | Nonces are issued by the service per Windows user, used once, valid 10 minutes; answers must be fresh. |
@@ -60,8 +61,13 @@ Limits, stated plainly:
 3. **Follow**: long-poll `session` with the configuration version in use;
    every answer goes to the service, which applies a newer configuration
    or takes the tunnel down when the session ended.
-4. **Renew**: after `renew_after`, new WireGuard and device keys; the tunnel
-   keeps the old ones until the next sign-in.
+4. **Renew**: when the server sends `renew_after` and it has passed, new
+   WireGuard and device keys (and a new certificate in certificate groups).
+   The new WireGuard keys are saved as *pending*; the tunnel keeps the old
+   ones, and the next sign-in announces the new key (`wg_public_key`) and
+   adopts it. The new device key is used once saved. The server keeps the
+   old keys until the new ones are used, so a crash at any point never
+   locks the device out.
 5. **End**: sign-out, idle, time limit, the app closing, or the Windows
    session ending all take the tunnel down.
 

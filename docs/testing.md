@@ -5,6 +5,7 @@
 | Where | What |
 |---|---|
 | `make check` (any system) | Protocol against the shared vectors (`internal/protocol/testdata/vectors.json`, a copy of `docs/client-protocol-vectors.json` in the Hifaz repository; keep them identical). End-to-end app flows against `internal/fakeserver` and the real service engine: enrollment with MFA, sign-in with OTP, configuration changes, server-ended sessions, disconnect, quit, key renewal, refused full tunnel, wrong fingerprint, app too old. Engine checks: nonces, replay, other users, policy, refused documents. |
+| `scripts/interop-hifaz.sh <Hifaz checkout>` | The app's protocol client and service engine against the **real** Hifaz server (its own test harness, in memory): enrollment with MFA, the service accepting the server's signed documents and configuration, `version` on status calls, `renew_not_due`, renewal adopted at the next sign-in with `wg_public_key`, `app_too_old`, sign-out, and a certificate group. Copies what it needs into the checkout and removes it after. |
 | CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance), DPAPI, and a real WireGuardNT adapter: up, routes, NRPT rule, reconfigure, down, nothing left. Builds a test MSI. |
 
 ## Against a Hifaz server (test environment)
@@ -14,7 +15,8 @@ Windows 10 or 11 VM (x64; arm64 if available) with the test MSI from CI.
 
 Server preparation: a user with MFA, a user without MFA, a group with
 `allowed_ips` for the test network and DNS with a search domain, a group
-with `0.0.0.0/0`, a group that requires device certificates.
+with `0.0.0.0/0`, a group that requires device certificates (behind a
+reverse proxy set up to check client certificates, as for the web).
 
 ### Checklist
 
@@ -27,6 +29,7 @@ Enrollment
 - [ ] Link with fingerprint: enrolls; MFA setup with the QR code; device name when the admin left it empty.
 - [ ] Link without fingerprint (made before 0.8.0): the fingerprint screen; "differs" cancels.
 - [ ] Used or expired link: clear message. MFA-only or certificate link: "opens in the browser".
+- [ ] Certificate group: enrollment gets a certificate; sign-in works through the proxy; renewal brings a new certificate.
 - [ ] The device card on the dashboard shows method `app`, platform, app version, OS.
 
 Sign-in and session
@@ -40,7 +43,8 @@ Sign-in and session
 - [ ] `Servers` policy without the test server: enrollment and sign-in refused.
 
 Keys
-- [ ] Set `renew_after` in the past (or ask for new keys): renewed while connected; next sign-in works with the new keys.
+- [ ] Ask for new keys on the dashboard: renewed while connected; the tunnel keeps the old keys; the next sign-in uses and adopts the new ones (the dashboard shows the new key).
+- [ ] Kill the app right after a renewal (Task Manager): the next start still signs in.
 - [ ] Offline past `keys_expire_at`: "keys expired"; a renewal link fixes it.
 
 Several users

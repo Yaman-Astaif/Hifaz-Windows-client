@@ -16,6 +16,8 @@ const (
 	HeaderTime      = "Hifaz-Time"
 	HeaderNonce     = "Hifaz-Nonce"
 	HeaderSignature = "Hifaz-Signature"
+	// HeaderApp names the app on every call; it is not signed.
+	HeaderApp = "Hifaz-App"
 
 	signContext = "hifaz-client-v1"
 )

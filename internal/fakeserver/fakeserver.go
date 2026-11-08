@@ -6,13 +6,20 @@
 package fakeserver
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -22,6 +29,7 @@ import (
 	"time"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/protocol"
+	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/version"
 )
 
 // OTP is the one code every MFA user's authenticator shows.
@@ -32,6 +40,8 @@ type Server struct {
 	ts       *httptest.Server
 	prefix   string // path prefix of the public URL, "" or like "/vpn"
 	identity ed25519.PrivateKey
+	caKey    *ecdsa.PrivateKey // signs device certificates
+	caCert   *x509.Certificate
 
 	mu            sync.Mutex
 	now           func() time.Time
@@ -53,6 +63,7 @@ type Server struct {
 type user struct {
 	password string
 	mfa      bool
+	cert     bool // the user's group requires device certificates
 }
 
 type link struct {
@@ -63,15 +74,23 @@ type step struct {
 	link       string
 	needsSetup bool
 	mfaDone    bool
+	wgKey      protocol.Key // sign-in: the WireGuard key announced
 }
 
-// Device is an enrolled app device as the server records it.
+// Device is an enrolled app device as the server records it. After a
+// renewal the new keys are pending (Next*) until they are used, as the
+// protocol says (section 10).
 type Device struct {
 	ID, Username, Name string
 	Key                ed25519.PublicKey
 	WGPublicKey        protocol.Key
 	PSK                protocol.Key
+	Cert               []byte // the certificate the device must present, if any
 	Disabled           bool
+
+	NextKey         ed25519.PublicKey
+	NextWGPublicKey protocol.Key
+	NextPSK         protocol.Key
 }
 
 type session struct {
@@ -107,6 +126,7 @@ func New(t testing.TB, opts Options) *Server {
 	if s.now == nil {
 		s.now = time.Now
 	}
+	s.newCA(t)
 	mux := http.NewServeMux()
 	api := s.prefix + protocol.APIPrefix
 	mux.HandleFunc("GET "+api+"/info", s.handleInfo)
@@ -119,17 +139,78 @@ func New(t testing.TB, opts Options) *Server {
 	mux.HandleFunc("GET "+api+"/session", s.signed(s.handleSession))
 	mux.HandleFunc("POST "+api+"/logout", s.signed(s.handleLogout))
 	mux.HandleFunc("POST "+api+"/keys/renew", s.signed(s.handleRenew))
-	s.ts = httptest.NewTLSServer(mux)
+	s.ts = httptest.NewUnstartedServer(mux)
+	s.ts.TLS = &tls.Config{ClientAuth: tls.RequestClientCert} // as a proxy for certificate groups
+	s.ts.StartTLS()
 	t.Cleanup(s.ts.Close)
 	return s
+}
+
+func (s *Server) newCA(t testing.TB) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Fake Hifaz CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.caKey = key
+	s.caCert, _ = x509.ParseCertificate(der)
+}
+
+// issue signs a device certificate for a P-256 CSR (section 6).
+func (s *Server) issue(csrB64, username string) ([]byte, bool) {
+	der, err := base64.StdEncoding.DecodeString(csrB64)
+	if err != nil {
+		return nil, false
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil || csr.CheckSignature() != nil {
+		return nil, false
+	}
+	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return nil, false
+	}
+	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: username},
+		NotBefore: s.now().Add(-time.Minute), NotAfter: s.now().Add(90 * 24 * time.Hour),
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	cert, err := x509.CreateCertificate(rand.Reader, tmpl, s.caCert, pub, s.caKey)
+	return cert, err == nil
+}
+
+// appTooOld applies min_app_version to the Hifaz-App header, as the real
+// server does: on signed calls and at enroll/finish only, so an old app can
+// still read the info document and its download link (section 3). It
+// writes the error and reports true when the app is too old. s.mu is held.
+func (s *Server) appTooOld(w http.ResponseWriter, r *http.Request) bool {
+	platform, v, ok := strings.Cut(r.Header.Get(protocol.HeaderApp), "/")
+	if s.minAppVersion == "" || !ok || platform != "windows" {
+		return false
+	}
+	if cmp, err := version.Compare(v, s.minAppVersion); err == nil && cmp >= 0 {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	json.NewEncoder(w).Encode(map[string]string{"error": protocol.ErrCodeAppTooOld, "min_version": s.minAppVersion})
+	return true
 }
 
 // URL is the server's public URL.
 func (s *Server) URL() string { return s.ts.URL + s.prefix }
 
 // HTTPClient returns a protocol HTTP client that trusts the test certificate.
-func (s *Server) HTTPClient() *http.Client {
-	hc := protocol.NewHTTPClient(nil)
+func (s *Server) HTTPClient() *http.Client { return s.HTTPClientWith(nil) }
+
+// HTTPClientWith is HTTPClient presenting a device certificate.
+func (s *Server) HTTPClientWith(cert *tls.Certificate) *http.Client {
+	hc := protocol.NewHTTPClient(nil, cert)
 	hc.Transport.(*http.Transport).TLSClientConfig.RootCAs = s.ts.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 	return hc
 }
@@ -145,6 +226,14 @@ func (s *Server) AddUser(name, password string, mfa bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.users[name] = &user{password: password, mfa: mfa}
+}
+
+// RequireCertificate puts a user in a group that requires device
+// certificates.
+func (s *Server) RequireCertificate(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.users[name].cert = true
 }
 
 // NewLink creates an enrollment link and returns it as the app gets it
@@ -313,7 +402,7 @@ func (s *Server) handleEnrollStart(w http.ResponseWriter, r *http.Request) {
 	st := &step{link: req.Link, needsSetup: !u.mfa}
 	s.steps[token] = st
 	out := protocol.EnrollStartResult{StepToken: token, Kind: l.kind, Username: l.username, Device: l.device,
-		NeedsMFASetup: st.needsSetup}
+		NeedsMFASetup: st.needsSetup, CertRequired: u.cert}
 	if st.needsSetup {
 		out.MFASecret = "JBSWY3DPEHPK3PXP"
 		out.MFAURI = "otpauth://totp/Hifaz:" + l.username + "?secret=JBSWY3DPEHPK3PXP&issuer=Hifaz"
@@ -356,6 +445,9 @@ func (s *Server) handleEnrollFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.appTooOld(w, r) {
+		return
+	}
 	st := s.steps[req.StepToken]
 	if st == nil || (st.needsSetup && !st.mfaDone) {
 		writeError(w, 400, protocol.ErrCodeInvalidStep)
@@ -376,11 +468,19 @@ func (s *Server) handleEnrollFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, protocol.ErrCodeInvalidDeviceChoice)
 		return
 	}
+	var cert []byte
+	if s.users[l.username].cert {
+		var ok bool
+		if cert, ok = s.issue(req.CSR, l.username); !ok {
+			writeError(w, 400, protocol.ErrCodeInvalidCSR)
+			return
+		}
+	}
 	var psk protocol.Key
 	rand.Read(psk[:])
 	s.nextID++
 	d := &Device{ID: fmt.Sprintf("d_%04d", s.nextID), Username: l.username, Name: name,
-		Key: devKey, WGPublicKey: wgPub, PSK: psk}
+		Key: devKey, WGPublicKey: wgPub, PSK: psk, Cert: cert}
 	s.devices[d.ID] = d
 	delete(s.steps, req.StepToken)
 	delete(s.links, st.link)
@@ -388,7 +488,8 @@ func (s *Server) handleEnrollFinish(w http.ResponseWriter, r *http.Request) {
 	s.writeSigned(w, map[string]any{
 		"type": protocol.TypeEnrolled, "nonce": req.Nonce, "server": s.URL(), "issued_at": s.now(),
 		"device_id": d.ID, "username": d.Username, "device": d.Name,
-		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "psk_sealed": sealed, "config": s.config,
+		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(s.renewAfter),
+		"psk_sealed": sealed, "config": s.config, "certificate": b64OrNil(cert),
 	})
 }
 
@@ -398,6 +499,7 @@ type request struct {
 	nonce  string
 	body   []byte
 	r      *http.Request
+	wgKey  protocol.Key // sign-in: the WireGuard key announced, if any
 }
 
 // signed checks the device signature (section 7) before calling h, with
@@ -424,9 +526,24 @@ func (s *Server) signed(h func(http.ResponseWriter, *request)) http.HandlerFunc 
 			return
 		}
 		path := strings.TrimPrefix(r.URL.RequestURI(), s.prefix)
-		if d == nil || d.Disabled || terr != nil || serr != nil || !protocol.ValidNonce(nonce) ||
-			!ed25519.Verify(d.Key, protocol.StringToSign(r.Method, path, r.Header.Get(protocol.HeaderTime), nonce, body), sig) {
+		if d == nil || d.Disabled || terr != nil || serr != nil || !protocol.ValidNonce(nonce) {
 			writeError(w, 401, protocol.ErrCodeInvalidSignature)
+			return
+		}
+		sts := protocol.StringToSign(r.Method, path, r.Header.Get(protocol.HeaderTime), nonce, body)
+		switch {
+		case ed25519.Verify(d.Key, sts, sig):
+		case d.NextKey != nil && ed25519.Verify(d.NextKey, sts, sig):
+			d.Key, d.NextKey = d.NextKey, nil // the renewed key is in use: the old one ends
+		default:
+			writeError(w, 401, protocol.ErrCodeInvalidSignature)
+			return
+		}
+		if s.appTooOld(w, r) {
+			return
+		}
+		if d.Cert != nil && (r.TLS == nil || len(r.TLS.PeerCertificates) == 0 || !bytes.Equal(r.TLS.PeerCertificates[0].Raw, d.Cert)) {
+			writeError(w, 400, protocol.ErrCodeCertRequired)
 			return
 		}
 		if _, dup := s.seen[nonce]; dup {
@@ -449,9 +566,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, q *request) {
 		writeError(w, 401, protocol.ErrCodeInvalidCredentials)
 		return
 	}
+	if req.WGPublicKey != "" {
+		k, err := protocol.ParseKey(req.WGPublicKey)
+		if err != nil || (k != q.device.WGPublicKey && (q.device.NextWGPublicKey.IsZero() || k != q.device.NextWGPublicKey)) {
+			writeError(w, 400, protocol.ErrCodeUnknownDevice)
+			return
+		}
+		q.wgKey = k
+	}
 	if u.mfa && req.OTP == "" {
 		token := s.random()
-		s.steps[token] = &step{link: "login:" + q.device.ID}
+		s.steps[token] = &step{link: "login:" + q.device.ID, wgKey: q.wgKey}
 		writeJSON(w, map[string]string{"status": protocol.StatusOTPRequired, "step_token": token})
 		return
 	}
@@ -477,10 +602,15 @@ func (s *Server) handleLoginOTP(w http.ResponseWriter, q *request) {
 		return
 	}
 	delete(s.steps, req.StepToken)
+	q.wgKey = st.wgKey
 	s.startSession(w, q)
 }
 
 func (s *Server) startSession(w http.ResponseWriter, q *request) {
+	if d := q.device; !d.NextWGPublicKey.IsZero() && q.wgKey == d.NextWGPublicKey {
+		// The renewed WireGuard keys are in use now.
+		d.WGPublicKey, d.PSK, d.NextWGPublicKey, d.NextPSK = d.NextWGPublicKey, d.NextPSK, protocol.Key{}, protocol.Key{}
+	}
 	for _, se := range s.sessions { // one session per device
 		if se.device == q.device.ID && se.status == protocol.StatusConnected {
 			se.status, se.reason = protocol.StatusEnded, protocol.ReasonSignedOut
@@ -534,27 +664,49 @@ func (s *Server) handleRenew(w http.ResponseWriter, q *request) {
 	}
 	wgPub, err := protocol.ParseKey(req.WGPublicKey)
 	if err != nil {
-		writeError(w, 400, "invalid_request")
+		writeError(w, 400, protocol.ErrCodeBadRequest)
 		return
+	}
+	if s.renewAfter > 0 && q.device.NextWGPublicKey.IsZero() {
+		writeError(w, 400, protocol.ErrCodeRenewNotDue)
+		return
+	}
+	var cert []byte
+	if q.device.Cert != nil {
+		var ok bool
+		if cert, ok = s.issue(req.CSR, q.device.Username); !ok {
+			writeError(w, 400, protocol.ErrCodeInvalidCSR)
+			return
+		}
 	}
 	if req.DeviceKey != "" {
 		k, err := protocol.ParseEd25519PublicKey(req.DeviceKey)
 		if err != nil {
-			writeError(w, 400, "invalid_request")
+			writeError(w, 400, protocol.ErrCodeBadRequest)
 			return
 		}
-		q.device.Key = k
+		q.device.NextKey = k
 	}
 	var psk protocol.Key
 	rand.Read(psk[:])
-	q.device.WGPublicKey, q.device.PSK = wgPub, psk
+	q.device.NextWGPublicKey, q.device.NextPSK = wgPub, psk // pending until used
+	if cert != nil {
+		q.device.Cert = cert
+	}
 	s.renewals++
 	sealed, _ := protocol.SealPSK(psk, wgPub, q.device.ID, rand.Reader)
 	s.writeSigned(w, map[string]any{
 		"type": protocol.TypeRenewed, "nonce": q.nonce, "server": s.URL(), "issued_at": s.now(),
 		"keys_expire_at": s.now().Add(90 * 24 * time.Hour), "renew_after": s.now().Add(s.renewAfter),
-		"psk_sealed": sealed, "config": s.config,
+		"psk_sealed": sealed, "config": s.config, "certificate": b64OrNil(cert),
 	})
+}
+
+func b64OrNil(b []byte) any {
+	if b == nil {
+		return nil
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
 
 func (s *Server) sessionOf(q *request) *session {

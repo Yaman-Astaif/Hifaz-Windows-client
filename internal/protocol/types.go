@@ -55,6 +55,7 @@ type EnrollStartResult struct {
 	Username      string `json:"username"`
 	Device        string `json:"device,omitempty"`
 	NeedsMFASetup bool   `json:"needs_mfa_setup"`
+	CertRequired  bool   `json:"cert_required,omitempty"` // send a CSR at enroll/finish
 	MFAURI        string `json:"mfa_uri,omitempty"`
 	MFASecret     string `json:"mfa_secret,omitempty"`
 }
@@ -85,6 +86,7 @@ type Enrolled struct {
 	Username     string    `json:"username"`
 	Device       string    `json:"device"`
 	KeysExpireAt time.Time `json:"keys_expire_at"`
+	RenewAfter   time.Time `json:"renew_after"`
 	PSKSealed    string    `json:"psk_sealed"`
 	Certificate  string    `json:"certificate,omitempty"`
 	Config       *Config   `json:"config"`

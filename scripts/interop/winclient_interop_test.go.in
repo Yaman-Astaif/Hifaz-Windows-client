@@ -1,0 +1,377 @@
+package api
+
+// Interop check: the Windows app's protocol client and service engine
+// against the real Hifaz server. Copied into a Hifaz checkout and run by
+// scripts/interop-hifaz.sh in the Hifaz-Windows-client repository; never
+// committed to Hifaz.
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"hifaz/internal/audit"
+	"hifaz/internal/auth"
+	"hifaz/internal/clock"
+	"hifaz/internal/config"
+	"hifaz/internal/service"
+	"hifaz/internal/store"
+	"hifaz/internal/wg"
+	"hifaz/internal/winclient/daemon"
+	"hifaz/internal/winclient/ipc"
+	"hifaz/internal/winclient/protocol"
+)
+
+type nopTun struct{ up bool }
+
+func (n *nopTun) Up(*protocol.TunnelConfig, protocol.Key, protocol.Key) error {
+	n.up = true
+	return nil
+}
+func (n *nopTun) Reconfigure(*protocol.TunnelConfig) error { return nil }
+func (n *nopTun) Down() error                              { n.up = false; return nil }
+func (n *nopTun) Stats() (daemon.Stats, error)             { return daemon.Stats{}, nil }
+
+type winEnv struct {
+	clk  *clock.Fake
+	srv  *httptest.Server
+	svc  *service.Service
+	adm  *service.Admin
+	wg   *wg.Fake
+	cfg  *config.Config
+	eng  *daemon.Engine
+	tun  *nopTun
+	call daemon.Caller
+}
+
+func newWinEnv(t *testing.T) *winEnv {
+	cfg := config.Default()
+	cfg.WireGuard.Endpoint = "vpn.example.com:43817"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	box, _ := auth.NewSecretBox(make([]byte, 32))
+	fake := wg.NewFake()
+	fake.Key = "TrMvSoP4jYQlY6RIzBgbssQqY3vxI2Pi+y71lOWWXX0="
+	clk := clock.NewFake(time.Now())
+	svc := service.New(service.Deps{Config: cfg, Store: store.NewMemoryStore(), WireGuard: fake,
+		Hasher: auth.NewHasher(1000, 2), SecretBox: box, Audit: &audit.Memory{}, Clock: clk})
+	svc.SetVersion("0.8.0-test")
+	srv := httptest.NewTLSServer(New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)), "test").Handler())
+	t.Cleanup(srv.Close)
+	cfg.PublicURL = srv.URL
+	tun := &nopTun{}
+	e := &winEnv{srv: srv, svc: svc, adm: svc.Admin("test"), wg: fake, cfg: cfg, tun: tun, clk: clk,
+		eng:  daemon.New(daemon.Options{Tunnel: tun, Pins: daemon.NewFileStore(filepath.Join(t.TempDir(), "pins.json"))}),
+		call: daemon.Caller{SID: "S-1-5-21-1", Session: 1}}
+	if _, err := e.adm.AddGroup("staff", "10.98.10.0/24", "", 0, 0, true); err != nil { // MFA required
+		t.Fatal(err)
+	}
+	return e
+}
+
+// httpClient trusts the test server; header adds what a proxy would add.
+func (e *winEnv) httpClient(cert *tls.Certificate, header func(*http.Request)) *http.Client {
+	hc := protocol.NewHTTPClient(nil, cert)
+	tr := hc.Transport.(*http.Transport)
+	tr.TLSClientConfig.RootCAs = e.srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	if header != nil {
+		hc.Transport = roundTripper(func(r *http.Request) (*http.Response, error) { header(r); return tr.RoundTrip(r) })
+	}
+	return hc
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func (e *winEnv) svcNonce(t *testing.T) string {
+	r := e.eng.Handle(context.Background(), 1, e.call, &ipc.Request{Op: ipc.OpNonce})
+	if r.Error != nil {
+		t.Fatal(r.Error)
+	}
+	return r.Nonce
+}
+
+// code is the current one-time code on the server's clock. The server
+// takes each window's code once, so each use moves the clock to the next
+// window first (as a person would wait for a new code).
+func (e *winEnv) code(d *winDevice) string {
+	if d.used {
+		e.clk.Advance(30 * time.Second)
+	}
+	d.used = true
+	return auth.TOTPCode(d.secret, auth.TOTPCounter(e.clk.Now()))
+}
+
+type winDevice struct {
+	client  *protocol.Client
+	signer  *protocol.KeySigner
+	wgPriv  protocol.Key
+	psk     protocol.Key
+	secret  []byte
+	used    bool
+	certKey []byte
+	cert    []byte
+}
+
+func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Request)) (*winDevice, string) {
+	t.Helper()
+	ctx := context.Background()
+	nu, err := e.adm.AddUser(ctx, user, "", group, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := protocol.ParseEnrollLink(nu.Device.URL)
+	if err != nil || link.Fingerprint == "" {
+		t.Fatalf("link %q: %v", nu.Device.URL, err)
+	}
+	c, err := protocol.NewClient(link.Server, protocol.Pin{Fingerprint: link.Fingerprint},
+		protocol.Options{HTTPClient: e.httpClient(nil, header), App: "windows/0.1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := c.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.CheckCompatible(info, "windows", "0.1.0", func(a, b string) (int, error) { return 0, nil }); err != nil {
+		t.Fatal(err)
+	}
+	li, err := c.EnrollInfo(ctx, link.Token)
+	if err != nil || li.Kind != protocol.LinkDevice {
+		t.Fatalf("enroll info %+v %v", li, err)
+	}
+	st, err := c.EnrollStart(ctx, link.Token, nu.Password, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &winDevice{client: c}
+	if st.NeedsMFASetup {
+		d.secret, _ = auth.DecodeTOTPSecret(st.MFASecret)
+		if err := c.EnrollMFA(ctx, st.StepToken, e.code(d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wgPriv, wgPub, _ := protocol.GenerateWireGuardKey()
+	devPub, devPriv, _ := ed25519.GenerateKey(rand.Reader)
+	req := protocol.EnrollFinishRequest{StepToken: st.StepToken, Nonce: e.svcNonce(t), Platform: "windows",
+		DeviceName: "PC", WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub),
+		App: protocol.AppIdentity{Name: "Hifaz for Windows", Version: "0.1.0"}, OS: "Windows 11 Pro 24H2 (26100)"}
+	if st.CertRequired {
+		key, csr, err := protocol.NewCertificateRequest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.certKey, req.CSR = key, b64std(csr)
+	}
+	enrolled, doc, err := c.EnrollFinish(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enrolled.Config == nil {
+		t.Fatal("no config")
+	}
+	if _, err := enrolled.Config.Parse(); err != nil {
+		t.Fatalf("the server's configuration fails the app's checks: %v (%+v)", err, enrolled.Config)
+	}
+	// The service records the identity from the signed answer.
+	r := e.eng.Handle(ctx, 1, e.call, &ipc.Request{Op: ipc.OpRegister, Server: link.Server,
+		IdentityKey: protocol.EncodeEd25519PublicKey(c.Pin().Key), Document: &doc})
+	if r.Error != nil {
+		t.Fatalf("service register: %v", r.Error)
+	}
+	psk, err := protocol.OpenSealedPSK(enrolled.PSKSealed, wgPriv, enrolled.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.wg.PresharedKey(wgPub.String()) != "" && e.wg.PresharedKey(wgPub.String()) != psk.String() {
+		t.Fatal("opened PSK differs from the server's")
+	}
+	if st.CertRequired {
+		if d.cert, err = decodeB64(enrolled.Certificate); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := protocol.ClientCertificate(d.cert, d.certKey); err != nil {
+			t.Fatalf("issued certificate: %v", err)
+		}
+	}
+	d.signer, _ = protocol.NewKeySigner(enrolled.DeviceID, devPriv)
+	d.wgPriv, d.psk = wgPriv, psk
+	return d, nu.Password
+}
+
+// signIn signs in through the OTP step and brings the service's tunnel up.
+func (e *winEnv) signIn(t *testing.T, d *winDevice, user, password string, wgPub string) *protocol.Session {
+	t.Helper()
+	ctx := context.Background()
+	res, err := d.client.Login(ctx, protocol.Auth{Signer: d.signer, Nonce: e.svcNonce(t)},
+		protocol.LoginRequest{Username: user, Password: password, WGPublicKey: wgPub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OTPRequired {
+		t.Fatal("MFA user signed in without a code")
+	}
+	res, err = d.client.LoginOTP(ctx, protocol.Auth{Signer: d.signer, Nonce: e.svcNonce(t)}, res.StepToken, e.code(d))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.eng.Handle(ctx, 7, e.call, &ipc.Request{Op: ipc.OpConnect, Server: d.client.Server(), Document: &res.Document,
+		PrivateKey: append([]byte(nil), d.wgPriv[:]...), PSK: append([]byte(nil), d.psk[:]...)})
+	if r.Error != nil {
+		t.Fatalf("service connect: %v", r.Error)
+	}
+	if !e.tun.up {
+		t.Fatal("tunnel not up")
+	}
+	return res.Session
+}
+
+func TestWinClientInterop(t *testing.T) {
+	e := newWinEnv(t)
+	ctx := context.Background()
+	d, pw := e.enroll(t, "dana", "staff", nil)
+
+	s := e.signIn(t, d, "dana", pw, "")
+	if s.Config == nil || s.SessionToken == "" {
+		t.Fatalf("session %+v", s)
+	}
+
+	// Status with the version in use, then with an older one (answered at once).
+	auth := func() protocol.Auth {
+		return protocol.Auth{Signer: d.signer, Nonce: e.svcNonce(t), SessionToken: s.SessionToken}
+	}
+	st, doc, err := d.client.Session(ctx, auth(), 0, s.Config.Version)
+	if err != nil || st.Status != protocol.StatusConnected {
+		t.Fatalf("status: %+v %v", st, err)
+	}
+	if r := e.eng.Handle(ctx, 7, e.call, &ipc.Request{Op: ipc.OpUpdate, Document: &doc}); r.Error != nil {
+		t.Fatalf("service update: %v", r.Error)
+	}
+	start := time.Now()
+	if _, _, err := d.client.Session(ctx, auth(), 30*time.Second, s.Config.Version-1); err != nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("older version must be answered at once: %v after %v", err, time.Since(start))
+	}
+
+	// Renewal: not due, then asked for by the administrator.
+	_, wgPub, _ := protocol.GenerateWireGuardKey()
+	_, _, err = d.client.Renew(ctx, protocol.Auth{Signer: d.signer, Nonce: mustNonce(t)}, protocol.RenewRequest{WGPublicKey: wgPub.String()})
+	if protocol.ErrorCode(err) != protocol.ErrCodeRenewNotDue {
+		t.Fatalf("renew not due: %v", err)
+	}
+	if _, err := e.adm.RenewDevice("dana", "PC"); err != nil {
+		t.Fatal(err)
+	}
+	st, _, err = d.client.Session(ctx, auth(), 0, 0)
+	if err != nil || st.RenewAfter.IsZero() {
+		t.Fatalf("renew_after after the administrator's request: %+v %v", st, err)
+	}
+	newWG, newWGPub, _ := protocol.GenerateWireGuardKey()
+	newDevPub, newDevPriv, _ := ed25519.GenerateKey(rand.Reader)
+	renewed, _, err := d.client.Renew(ctx, protocol.Auth{Signer: d.signer, Nonce: mustNonce(t)}, protocol.RenewRequest{
+		WGPublicKey: newWGPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(newDevPub)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPSK, err := protocol.OpenSealedPSK(renewed.PSKSealed, newWG, d.signer.DeviceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sign out, then in with the new device key, announcing the new WireGuard key.
+	if err := d.client.Logout(ctx, auth()); err != nil {
+		t.Fatal(err)
+	}
+	e.eng.Closed(7)
+	d.signer, _ = protocol.NewKeySigner(d.signer.DeviceID(), newDevPriv)
+	d.wgPriv, d.psk = newWG, newPSK
+	s = e.signIn(t, d, "dana", pw, newWGPub.String())
+	if !e.wg.Has(newWGPub.String()) || e.wg.PresharedKey(newWGPub.String()) != newPSK.String() {
+		t.Fatal("the server does not use the renewed keys")
+	}
+
+	// app_too_old on a signed call; info stays open.
+	e.cfg.Clients.MinVersion = map[string]string{"windows": "9.0.0"}
+	if _, err := d.client.Info(ctx); err != nil {
+		t.Fatalf("info must stay open: %v", err)
+	}
+	_, _, err = d.client.Session(ctx, auth(), 0, 0)
+	var ae *protocol.APIError
+	if !errors.As(err, &ae) || ae.Code != protocol.ErrCodeAppTooOld || ae.MinVersion != "9.0.0" {
+		t.Fatalf("app too old: %v", err)
+	}
+	e.cfg.Clients.MinVersion = nil
+
+	// Sign-out ends the session.
+	if err := d.client.Logout(ctx, auth()); err != nil {
+		t.Fatal(err)
+	}
+	st, doc, err = d.client.Session(ctx, auth(), 0, 0)
+	if err == nil {
+		if st.Status != protocol.StatusEnded {
+			t.Fatalf("after logout: %+v", st)
+		}
+		if r := e.eng.Handle(ctx, 7, e.call, &ipc.Request{Op: ipc.OpUpdate, Document: &doc}); r.Error != nil || e.tun.up {
+			t.Fatalf("service after the end: %v up=%v", r.Error, e.tun.up)
+		}
+	} else if protocol.ErrorCode(err) != protocol.ErrCodeInvalidSession {
+		t.Fatalf("after logout: %v", err)
+	}
+}
+
+func TestWinClientCertificateGroup(t *testing.T) {
+	e := newWinEnv(t)
+	ctx := context.Background()
+	if _, err := e.adm.AddGroup("finance", "10.98.30.0/24", "", 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	req := true
+	if _, err := e.adm.UpdateGroup(ctx, "finance", service.GroupChanges{CertRequired: &req}); err != nil {
+		t.Fatal(err)
+	}
+	caDir := t.TempDir()
+	e.cfg.Certs.CAFile, e.cfg.Certs.CAKeyFile = caDir+"/ca.crt", caDir+"/ca.key"
+	box, _ := auth.NewSecretBox(make([]byte, 32))
+	if err := service.CreateCA(box, e.cfg.Certs.CAFile, e.cfg.Certs.CAKeyFile, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var d *winDevice
+	// The proxy passes the presented certificate's SHA-1 (here: the one
+	// the app holds).
+	proxy := func(r *http.Request) {
+		if d != nil && d.cert != nil {
+			sum := sha1.Sum(d.cert)
+			r.Header.Set("X-Hifaz-Client-Verify", "SUCCESS")
+			r.Header.Set("X-Hifaz-Client-SHA1", hex.EncodeToString(sum[:]))
+		}
+	}
+	d, pw := e.enroll(t, "rami", "finance", proxy)
+	if d.cert == nil {
+		t.Fatal("no certificate issued for a certificate group")
+	}
+	e.signIn(t, d, "rami", pw, "")
+}
+
+func b64std(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+func decodeB64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
+
+func mustNonce(t *testing.T) string {
+	n, err := protocol.NewNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}

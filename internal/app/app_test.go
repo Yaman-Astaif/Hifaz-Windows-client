@@ -169,7 +169,7 @@ func newHarness(t *testing.T) *harness {
 	engine := daemon.New(daemon.Options{Tunnel: h.tun,
 		Pins: daemon.NewFileStore(filepath.Join(t.TempDir(), "servers.json")), Policy: func() policy.Policy { return h.pol }})
 	h.ctrl = New(Options{Store: store, Service: &engineService{e: engine, caller: daemon.Caller{SID: "S-1-5-21-1", Session: 1}},
-		HTTPClient: h.srv.HTTPClient, OSName: "Windows 11 Pro", OnView: func(v View) { h.views <- v },
+		HTTPClient: h.srv.HTTPClientWith, OSName: "Windows 11 Pro", OnView: func(v View) { h.views <- v },
 		Log: func(msg string, args ...any) { t.Log(append([]any{msg}, args...)...) }})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
@@ -374,14 +374,59 @@ func TestKeyRenewal(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// ...and the next sign-in uses the new keys.
+	// ...and the next sign-in announces and adopts the renewed tunnel keys.
 	h.srv.SetRenewAfter(time.Hour)
+	if d := h.srv.Device("d_0001"); d.NextWGPublicKey.IsZero() {
+		t.Fatal("renewed keys not pending on the server")
+	}
+	h.ctrl.Do(Action{Name: "disconnect"})
+	h.wait(ScreenSignIn)
+	h.signIn()
+	d := h.srv.Device("d_0001")
+	if _, _, psk, _ := h.tun.state(); !d.NextWGPublicKey.IsZero() || psk != d.PSK {
+		t.Fatal("second sign-in did not adopt the renewed keys")
+	}
+	// And the one after that uses them as current.
 	h.ctrl.Do(Action{Name: "disconnect"})
 	h.wait(ScreenSignIn)
 	h.signIn()
 	if _, _, psk, _ := h.tun.state(); psk != h.srv.Device("d_0001").PSK {
-		t.Fatal("second sign-in did not use the renewed preshared key")
+		t.Fatal("adopted keys not kept")
 	}
+}
+
+func TestCertificateGroup(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", false)
+	h.srv.RequireCertificate("alice")
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "Laptop")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.wait(ScreenEnrollMFA)
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP})
+	h.wait(ScreenSignIn)
+	if h.srv.Device("d_0001").Cert == nil {
+		t.Fatal("no certificate issued")
+	}
+	// Signed calls only pass with the certificate presented over TLS.
+	h.signIn()
+	// Renewal brings a new certificate, which the next session presents.
+	h.srv.SetRenewAfter(-time.Hour)
+	h.ctrl.Do(Action{Name: "disconnect"})
+	h.wait(ScreenSignIn)
+	h.signIn()
+	deadline := time.Now().Add(10 * time.Second)
+	for h.srv.Renewals() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("keys not renewed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.srv.SetRenewAfter(time.Hour)
+	h.ctrl.Do(Action{Name: "disconnect"})
+	h.wait(ScreenSignIn)
+	h.signIn()
 }
 
 func TestAppTooOld(t *testing.T) {

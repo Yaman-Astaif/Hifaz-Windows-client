@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"net/http"
@@ -78,12 +79,12 @@ func run() int {
 	ctrl := app.New(app.Options{
 		Store: store, Service: service, OSName: sysinfo.OSName(), Log: logFn,
 		OnView: winui.OnView,
-		HTTPClient: func() *http.Client {
+		HTTPClient: func(cert *tls.Certificate) *http.Client {
 			proxy, pac := sysinfo.UserProxy()
 			if pac {
 				log.Warn("a proxy auto-configuration script is set; it is not used")
 			}
-			return protocol.NewHTTPClient(proxy)
+			return protocol.NewHTTPClient(proxy, cert)
 		},
 	})
 	ctx, cancel := context.WithCancel(context.Background())

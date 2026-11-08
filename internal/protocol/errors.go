@@ -23,6 +23,15 @@ const (
 	ErrCodeAppTooOld           = "app_too_old"
 	ErrCodeUnsupportedProtocol = "unsupported_protocol"
 	ErrCodeRateLimited         = "rate_limited"
+	ErrCodeInvalidCSR          = "invalid_csr"
+	ErrCodeRenewNotDue         = "renew_not_due"
+	ErrCodeUnknownDevice       = "unknown_device"
+	ErrCodeCertRequired        = "cert_required"
+	ErrCodeCertInvalid         = "cert_invalid"
+	ErrCodeCertUnchecked       = "cert_unchecked"
+	ErrCodeBadRequest          = "bad_request"
+	ErrCodeNotFound            = "not_found"
+	ErrCodeTimeout             = "timeout"
 )
 
 // APIError is an error answer from the server.

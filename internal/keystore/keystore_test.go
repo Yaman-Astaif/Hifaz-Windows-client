@@ -77,6 +77,17 @@ func TestStore(t *testing.T) {
 		t.Fatal("not wiped")
 	}
 
+	// Pending keys are used next, and adopted after.
+	opened, _ = s.Secrets(got)
+	opened.Pending = &PendingKeys{WGPrivate: [32]byte{9}, PSK: [32]byte{8}}
+	if wg, psk := opened.TunnelKeys(); wg != [32]byte{9} || psk != [32]byte{8} {
+		t.Fatal("pending keys not used")
+	}
+	opened.AdoptPending()
+	if opened.Pending != nil || opened.WGPrivate != [32]byte{9} || opened.PSK != [32]byte{8} {
+		t.Fatal("pending keys not adopted")
+	}
+
 	// Another protector (another Windows user) cannot open them.
 	other, _ := Open(path, newTestProtector(t))
 	if _, err := other.Secrets(got); err == nil {
