@@ -65,7 +65,9 @@ func TestTunnelUpDown(t *testing.T) {
 		}
 		p := conf.FirstPeer()
 		// Idle detection on the server depends on silence: never a keepalive.
-		if p.Flags&driver.PeerHasPersistentKeepalive != 0 || p.PersistentKeepalive != 0 {
+		// (Read back, the driver marks the field as present; its value is
+		// what matters: 0 means off.)
+		if p.PersistentKeepalive != 0 {
 			t.Fatalf("%s: persistent keepalive set (%d)", when, p.PersistentKeepalive)
 		}
 		if p.LastHandshake != 0 {
