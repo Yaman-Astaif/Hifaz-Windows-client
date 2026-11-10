@@ -58,6 +58,32 @@ func TestTunnelUpDown(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	checkPeer := func(when string) {
+		conf, err := tun.adapter.Configuration()
+		if err != nil || conf.PeerCount != 1 {
+			t.Fatalf("%s: configuration %v, %d peers", when, err, conf.PeerCount)
+		}
+		p := conf.FirstPeer()
+		// Idle detection on the server depends on silence: never a keepalive.
+		if p.Flags&driver.PeerHasPersistentKeepalive != 0 || p.PersistentKeepalive != 0 {
+			t.Fatalf("%s: persistent keepalive set (%d)", when, p.PersistentKeepalive)
+		}
+		if p.LastHandshake != 0 {
+			t.Fatalf("%s: the peer carries an earlier handshake", when)
+		}
+	}
+	checkPeer("first sign-in")
+
+	// The next sign-in gets a new adapter with a fresh peer: no session keys
+	// from before, so the first packet starts a new handshake at once.
+	if err := tun.Down(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tun.Up(cfg2, priv, protocol.Key{2}); err != nil {
+		t.Fatal(err)
+	}
+	checkPeer("next sign-in")
+
 	if err := tun.Down(); err != nil {
 		t.Fatal(err)
 	}

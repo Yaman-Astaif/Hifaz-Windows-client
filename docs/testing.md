@@ -36,6 +36,7 @@ Sign-in and session
 - [ ] Sign in with password, then OTP. Tunnel up; only the group's ranges routed (`route print`); names in the search domain resolve through Hifaz DNS (`Resolve-DnsName`), other names unchanged.
 - [ ] Change the group's ranges on the dashboard: applied within seconds, no reconnect.
 - [ ] Idle timeout, time limit, admin ends the session, admin disables the device: the tunnel closes and the window says why.
+- [ ] After each of those, sign in again: traffic flows within about a second (a new handshake at once, no 10–15 second wait).
 - [ ] Disconnect from the window and from the tray; quit from the tray: the session ends on the server too.
 - [ ] Clock 10 minutes off: clear message with the server time.
 - [ ] `min_app_version` above the app's version: "update needed", with the download link if set.

@@ -60,7 +60,11 @@ func New(log func(msg string, args ...any)) *Tunnel {
 	return &Tunnel{log: log}
 }
 
-// Up implements daemon.Tunnel.
+// Up implements daemon.Tunnel. Every sign-in comes here with a new
+// adapter: the engine always takes the previous tunnel down first, and
+// closing the adapter deletes it with its WireGuard session keys. So the
+// first packet after a sign-in starts a new handshake at once, instead of
+// the old keys being tried until WireGuard gives up on them.
 func (t *Tunnel) Up(cfg *protocol.TunnelConfig, priv, psk protocol.Key) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -129,7 +133,8 @@ func (t *Tunnel) setPeer(cfg *protocol.TunnelConfig, replace bool) error {
 	} else {
 		peer.Flags |= driver.PeerUpdateOnly
 	}
-	// No PersistentKeepalive: the session must be able to go idle (section 8).
+	// No PersistentKeepalive, ever: the server detects idle sessions by the
+	// tunnel's silence (section 8).
 	if err := peer.Endpoint.SetAddrPort(t.endpoint); err != nil {
 		return err
 	}

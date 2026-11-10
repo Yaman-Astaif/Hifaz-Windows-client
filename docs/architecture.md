@@ -68,8 +68,13 @@ Limits, stated plainly:
    adopts it. The new device key is used once saved. The server keeps the
    old keys until the new ones are used, so a crash at any point never
    locks the device out.
-5. **End**: sign-out, idle, time limit, the app closing, or the Windows
-   session ending all take the tunnel down.
+5. **End**: sign-out, idle, time limit, the administrator, the app
+   closing, or the Windows session ending all take the tunnel down, which
+   deletes the adapter with its WireGuard session keys. The next sign-in
+   always gets a new adapter, so it handshakes with the first packet instead
+   of trying the old keys until WireGuard gives up on them (about 10–15
+   seconds, as seen with clients that keep the tunnel configured). No
+   persistent keepalive: the server detects idle sessions by silence.
 
 ## Coexistence
 

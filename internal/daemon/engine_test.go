@@ -31,6 +31,7 @@ type fakeTunnel struct {
 	failUp      error
 	downs, ups  int
 	reconfigure int
+	events      []string // "up" and "down", in order
 }
 
 func (f *fakeTunnel) Up(cfg *protocol.TunnelConfig, priv, psk protocol.Key) error {
@@ -41,6 +42,7 @@ func (f *fakeTunnel) Up(cfg *protocol.TunnelConfig, priv, psk protocol.Key) erro
 	}
 	f.up, f.cfg, f.priv, f.psk = true, cfg, priv, psk
 	f.ups++
+	f.events = append(f.events, "up")
 	return nil
 }
 
@@ -57,6 +59,7 @@ func (f *fakeTunnel) Down() error {
 	defer f.mu.Unlock()
 	f.up = false
 	f.downs++
+	f.events = append(f.events, "down")
 	return nil
 }
 
@@ -393,5 +396,46 @@ func TestFileStore(t *testing.T) {
 	}
 	if _, ok, _ := s.Load("S-1", server); ok {
 		t.Fatal("deleted record still there")
+	}
+}
+
+// Every sign-in gets a new tunnel: whatever ended the previous session, the
+// tunnel was taken down (the adapter and its WireGuard session keys deleted)
+// before the next one comes up, so the first packet starts a new handshake
+// instead of using the old session's keys.
+func TestEverySignInStartsAFreshTunnel(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	ended := func(reason string) {
+		doc := h.sign(h.id, map[string]any{"type": protocol.TypeSession, "nonce": h.nonce(alice),
+			"status": protocol.StatusEnded, "reason": reason})
+		if r := h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: doc}); r.Error != nil {
+			t.Fatal(r.Error)
+		}
+	}
+	steps := []func(){
+		func() { ended(protocol.ReasonEndedByAdmin) },
+		func() { ended(protocol.ReasonIdle) },
+		func() { ended(protocol.ReasonSignedOut) },
+		func() { h.do(7, alice, ipc.Request{Op: ipc.OpDisconnect}) },
+		func() { h.e.Closed(7) },                   // the app closed
+		func() { h.e.SessionEnded(alice.Session) }, // Windows sign-out
+		func() {}, // signing in again while still up
+	}
+	for i, end := range steps {
+		if r := h.connect(7, alice, config(1)); r.Error != nil {
+			t.Fatalf("step %d: %v", i, r.Error)
+		}
+		end()
+	}
+	h.connect(7, alice, config(1))
+	ev := h.tun.events
+	if len(ev) != 2*len(steps)+1 || ev[0] != "up" {
+		t.Fatalf("events %v", ev)
+	}
+	for i := 1; i < len(ev); i += 2 {
+		if ev[i] != "down" || ev[i+1] != "up" {
+			t.Fatalf("a tunnel came up without the previous one going down first: %v", ev)
+		}
 	}
 }
