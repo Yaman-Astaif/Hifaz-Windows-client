@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -105,6 +106,11 @@ func (c *Client) Pin() Pin { return c.pin }
 func (c *Client) FetchIdentity(ctx context.Context) (*Info, Pin, error) {
 	var doc SignedDocument
 	if err := c.call(ctx, http.MethodGet, APIPrefix+"/info", nil, nil, &doc); err != nil {
+		var e *APIError
+		if errors.As(err, &e) && e.Status == http.StatusNotFound {
+			// No client API: a Hifaz older than MinServerVersion.
+			return nil, Pin{}, &APIError{Status: e.Status, Code: ErrCodeServerTooOld}
+		}
 		return nil, Pin{}, err
 	}
 	payload, err := b64url.DecodeString(doc.Payload)
@@ -149,8 +155,18 @@ func (c *Client) Info(ctx context.Context) (*Info, error) {
 // SetPin replaces the pinned identity, after the user confirmed it.
 func (c *Client) SetPin(pin Pin) { c.pin = pin }
 
-// CheckCompatible reports whether an app of this version can use the server.
+// MinServerVersion is the first Hifaz release with this protocol.
+const MinServerVersion = "0.8.0"
+
+// CheckCompatible reports whether an app of this version can use the
+// server: Hifaz MinServerVersion or later, a protocol range that includes
+// Version, and the app at or above the server's min_app_version.
 func CheckCompatible(info *Info, platform, appVersion string, compare func(a, b string) (int, error)) error {
+	// The release part only: a test or pre-release build of 0.8.0 is 0.8.0.
+	server, _, _ := strings.Cut(info.ServerVersion, "-")
+	if cmp, err := compare(server, MinServerVersion); err != nil || cmp < 0 {
+		return &APIError{Code: ErrCodeServerTooOld}
+	}
 	if info.Protocol.Min > Version || info.Protocol.Max < Version {
 		return &APIError{Code: ErrCodeUnsupportedProtocol}
 	}

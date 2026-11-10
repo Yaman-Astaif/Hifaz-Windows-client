@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-11-11
 
-First version, for Hifaz 0.8.0 (client protocol version 1).
+First release. **Needs a Hifaz server 0.8.0 or later** (client protocol
+version 1); with an older server the app says so and asks you to have the
+server updated. Windows 10 or 11, x64 or ARM64.
 
 **Enrollment**
 - Paste the enrollment link from your administrator; the app checks the
@@ -33,6 +35,16 @@ First version, for Hifaz 0.8.0 (client protocol version 1).
 - Works for normal users; installing needs administrator rights once.
 - Works next to the WireGuard app and other VPNs; removing Hifaz leaves
   nothing behind.
+- Signing in again after a session ended reconnects at once: each sign-in
+  gets a new tunnel, with no waiting on old WireGuard session keys.
+- The About page shows the version, the developer, the server version the
+  app needs, and the third-party components with their licences.
+
+**Known limits**
+- The installer is not code-signed yet: Windows SmartScreen warns once
+  ("More info" → "Run anyway").
+- Proxy auto-configuration (PAC) scripts are not used; a manual proxy set
+  in Windows is.
 
 **Administrators**
 - Optional machine policy: allowed servers, and whether full tunnels are

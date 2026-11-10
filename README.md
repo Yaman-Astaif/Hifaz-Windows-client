@@ -6,12 +6,13 @@ administrator sends, sign in (password and MFA), and the tunnel opens; sign
 out, go idle or reach the time limit, and it closes.
 
 It speaks the Hifaz client protocol, version 1 (`docs/client-protocol.md` in
-the Hifaz repository), so it works with any Hifaz server from 0.8.0 on.
+the Hifaz repository), so it works with any Hifaz server from 0.8.0 on
+(`MinServerVersion` in `internal/protocol`).
 Nothing in it is specific to one organisation: no server names, domains or
 settings are built in.
 
-Status: **in development**, not released. Needs Hifaz 0.8.0
-(`feature/0.8.0`, checked against commit 4ac91af).
+Current release: **0.1.0**. Needs a Hifaz server **0.8.0 or later**; with
+an older server the app says so.
 
 ## How it is built
 

@@ -346,3 +346,25 @@ func TestNoRedirectsAndLimits(t *testing.T) {
 		t.Fatalf("large answer: %v", err)
 	}
 }
+
+func TestServerTooOld(t *testing.T) {
+	cmp := version.Compare
+	info := &protocol.Info{ServerVersion: "0.8.0", Protocol: protocol.ProtocolRange{Min: 1, Max: 1}}
+	for v, ok := range map[string]bool{"0.8.0": true, "0.8.0-test": true, "0.8.1": true, "1.0.0": true,
+		"0.7.2": false, "0.7.99": false, "": false, "dev": false} {
+		info.ServerVersion = v
+		err := protocol.CheckCompatible(info, "windows", "0.1.0", cmp)
+		if ok != (err == nil) || (!ok && protocol.ErrorCode(err) != protocol.ErrCodeServerTooOld) {
+			t.Errorf("server %q: %v", v, err)
+		}
+	}
+	// A server without the client API answers 404.
+	ts := httptest.NewTLSServer(http.NotFoundHandler())
+	defer ts.Close()
+	hc := protocol.NewHTTPClient(nil, nil)
+	hc.Transport.(*http.Transport).TLSClientConfig.RootCAs = ts.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c, _ := protocol.NewClient(ts.URL, protocol.Pin{}, protocol.Options{HTTPClient: hc})
+	if _, _, err := c.FetchIdentity(context.Background()); protocol.ErrorCode(err) != protocol.ErrCodeServerTooOld {
+		t.Fatalf("no client API: %v", err)
+	}
+}

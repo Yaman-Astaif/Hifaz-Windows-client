@@ -57,6 +57,7 @@ type Server struct {
 	appDownload   string
 	renewAfter    time.Duration
 	renewals      int
+	serverVersion string
 	nextID        int
 }
 
@@ -114,7 +115,7 @@ func New(t testing.TB, opts Options) *Server {
 		prefix: strings.TrimRight(opts.Prefix, "/"), identity: priv, now: opts.Now,
 		users: map[string]*user{}, links: map[string]*link{}, steps: map[string]*step{},
 		devices: map[string]*Device{}, sessions: map[string]*session{}, seen: map[string]time.Time{},
-		changed: make(chan struct{}), renewAfter: 76 * 24 * time.Hour,
+		changed: make(chan struct{}), renewAfter: 76 * 24 * time.Hour, serverVersion: "0.8.0",
 		config: protocol.Config{
 			Version: 1, Address: "10.98.10.4/32", Endpoint: "vpn.example.com:51820",
 			ServerPublicKey: "mkk2/n0976hg+yS1HkmS3Jr4EphDhzmX+vOZ02alXlY=",
@@ -299,6 +300,13 @@ func (s *Server) SetMinAppVersion(v string) {
 	s.minAppVersion = v
 }
 
+// SetServerVersion sets server_version in the info document.
+func (s *Server) SetServerVersion(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.serverVersion = v
+}
+
 // SetAppDownload sets app_download for Windows.
 func (s *Server) SetAppDownload(url string) {
 	s.mu.Lock()
@@ -343,7 +351,7 @@ func (s *Server) notifyLocked() {
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	minVersion, download := map[string]string{}, map[string]string{}
+	minVersion, download, serverVersion := map[string]string{}, map[string]string{}, s.serverVersion
 	if s.minAppVersion != "" {
 		minVersion["windows"] = s.minAppVersion
 	}
@@ -354,7 +362,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	s.writeSigned(w, map[string]any{
 		"type": protocol.TypeInfo, "server": s.URL(), "issued_at": s.now(),
 		"name":     map[string]string{"en": "Hifaz", "ar": "حِفاظ"},
-		"protocol": map[string]int{"min": 1, "max": 1}, "server_version": "0.8.0",
+		"protocol": map[string]int{"min": 1, "max": 1}, "server_version": serverVersion,
 		"identity_key":    protocol.EncodeEd25519PublicKey(s.identity.Public().(ed25519.PublicKey)),
 		"min_app_version": minVersion, "features": []string{"enroll", "login", "session", "renew"},
 		"app_download": download,

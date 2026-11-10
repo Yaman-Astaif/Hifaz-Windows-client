@@ -81,6 +81,7 @@
     put("replacing", view.replacing);
     put("app.version_text", app.version ? t("version", { v: app.version }) : "");
     put("app.developer", app.developer);
+    put("app.requires_text", app.min_server ? t("requiresServer", { v: app.min_server }) : "");
     return m;
   }
 

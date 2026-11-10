@@ -465,3 +465,14 @@ func TestBrowserLinks(t *testing.T) {
 		t.Fatalf("error %q", e.Code)
 	}
 }
+
+func TestServerTooOld(t *testing.T) {
+	h := newHarness(t)
+	h.srv.SetServerVersion("0.7.2")
+	h.srv.AddUser("alice", "pw", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	if e := h.waitError(); e.Code != protocol.ErrCodeServerTooOld {
+		t.Fatalf("error %q", e.Code)
+	}
+}

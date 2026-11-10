@@ -32,6 +32,10 @@ const (
 	ErrCodeBadRequest          = "bad_request"
 	ErrCodeNotFound            = "not_found"
 	ErrCodeTimeout             = "timeout"
+
+	// ErrCodeServerTooOld is the app's own: the server is older than
+	// MinServerVersion (or has no client API at all).
+	ErrCodeServerTooOld = "server_too_old"
 )
 
 // APIError is an error answer from the server.

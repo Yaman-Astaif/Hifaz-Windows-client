@@ -44,11 +44,11 @@ jobs:
           # Quoted: PowerShell would split -test.v at the dot.
           & build\tunnel-test\tunnel.test.exe '-test.v' '-test.run=TestTunnelUpDown'
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: Build the installer (x64)
+      - name: Build the installers (x64 and arm64, as a release does)
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.0.2
-          scripts\build.ps1 -Version 0.0.${{ github.run_number }} -Arch x64
+          scripts\build.ps1 -Version 0.0.${{ github.run_number }} -Release
       - uses: actions/upload-artifact@v5
         with:
           name: hifaz-msi-test

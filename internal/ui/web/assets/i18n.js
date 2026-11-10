@@ -78,10 +78,11 @@ window.I18N = (function () {
 
       developer: "المطوّر",
       version: "الإصدار {v}",
+      requiresServer: "يعمل مع خادم حِفاظ {v} أو أحدث.",
       aboutText: "حِفاظ بوابة WireGuard: يفتح النفق بعد تسجيل الدخول فقط، ويُغلقه عند الخروج أو الخمول أو انتهاء المدة.",
       thirdParty: "مكوّنات من جهات أخرى",
       creditWireGuard: "برنامج التشغيل WireGuardNT ومكتبة wireguard.dll الرسمية، كما هي",
-      trademark: "WireGuard علامة تجارية مسجّلة لـ Jason A. Donenfeld. حِفاظ غير تابع لمشروع WireGuard.",
+      trademark: "WireGuard علامة تجارية مسجّلة باسم Jason A. Donenfeld. حِفاظ غير تابع لمشروع WireGuard.",
 
       // notices
       enrolled: "تم تفعيل هذا الجهاز. سجّل الدخول للاتصال.",
@@ -117,6 +118,7 @@ window.I18N = (function () {
       cert_unchecked: "لا يستطيع الخادم التحقق من شهادة الجهاز حالياً (إعداد الخادم). تواصل مع المسؤول.",
       bad_request: "رفض الخادم الطلب. حدّث التطبيق أو تواصل مع المسؤول.",
       not_found: "هذا الخادم لا يدعم التطبيق. تحقّق من أن المسؤول حدّث حِفاظ إلى 0.8.0 أو أحدث.",
+      server_too_old: "يعمل هذا الخادم بإصدار أقدم من حِفاظ. يحتاج التطبيق إلى حِفاظ 0.8.0 أو أحدث؛ اطلب من المسؤول تحديث الخادم.",
       timeout: "الخادم مشغول. حاول مجدداً بعد قليل.",
       // errors (service)
       busy: "يستخدم مستخدم آخر على هذا الحاسوب اتصال حِفاظ الآن.",
@@ -211,6 +213,7 @@ window.I18N = (function () {
 
       developer: "Developer",
       version: "Version {v}",
+      requiresServer: "Works with Hifaz server {v} or later.",
       aboutText: "Hifaz is a WireGuard gateway: the tunnel opens only after you sign in, and closes on sign-out, when idle, or when time runs out.",
       thirdParty: "Third-party components",
       creditWireGuard: "the official WireGuardNT driver and wireguard.dll, unmodified",
@@ -248,6 +251,7 @@ window.I18N = (function () {
       cert_unchecked: "The server cannot check device certificates right now (server setup). Contact your administrator.",
       bad_request: "The server refused the request. Update the app or contact your administrator.",
       not_found: "This server does not support the app. Check that your administrator updated Hifaz to 0.8.0 or later.",
+      server_too_old: "This server runs an older version of Hifaz. The app needs Hifaz 0.8.0 or later; ask your administrator to update the server.",
       timeout: "The server is busy. Try again in a moment.",
       busy: "Another user on this computer is using the Hifaz connection right now.",
       not_registered: "This device is not registered with the Hifaz service on this computer. Enroll it again with a link.",

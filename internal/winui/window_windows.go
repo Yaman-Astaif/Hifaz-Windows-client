@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/app"
+	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/protocol"
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/version"
 )
 
@@ -412,7 +413,8 @@ func (h *windowHost) pushView() {
 func (h *windowHost) pushPrefs() { h.eval("onPrefs", h.prefs) }
 
 func (h *windowHost) pushApp() {
-	h.eval("onApp", map[string]string{"version": version.Version, "developer": version.Developer})
+	h.eval("onApp", map[string]string{"version": version.Version, "developer": version.Developer,
+		"min_server": protocol.MinServerVersion})
 }
 
 func (h *windowHost) setPrefs(p Prefs) {
