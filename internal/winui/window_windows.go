@@ -353,24 +353,35 @@ func (h *windowHost) createWebView() error {
 func (h *windowHost) serve(req *edge.ICoreWebView2WebResourceRequest, args *edge.ICoreWebView2WebResourceRequestedEventArgs) {
 	status, reason, body, ctype := 404, "Not Found", []byte(nil), "text/plain"
 	raw, err := req.GetUri()
-	if err == nil {
+	if err == nil && strings.EqualFold(raw, pageOrigin+"/favicon.ico") {
+		status, reason, err = 204, "No Content", nil // the window has its own icon
+	} else if err == nil {
 		var b []byte
 		if b, ctype, err = resolvePage(h.o.Files, raw); err == nil {
 			status, reason, body = 200, "OK", b
 		}
 	}
-	if status != 200 {
+	if status == 404 {
 		ctype = "text/plain"
 		h.o.Log("page request not served", "uri", raw, "err", err)
 	}
 	headers := "Content-Type: " + ctype + "\r\nContent-Security-Policy: " + pageCSP +
 		"\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store"
-	resp, err := h.webview.Environment().CreateWebResourceResponse(body, status, reason, headers)
+	// The library's CreateWebResourceResponse drops the content it is given
+	// (it assigns the stream to a shadowed variable), so the response is
+	// created empty and the content set with PutByteContent, which works.
+	resp, err := h.webview.Environment().CreateWebResourceResponse(nil, status, reason, headers)
 	if err != nil {
 		h.o.Log("serving the page", "err", err)
 		return
 	}
 	defer resp.Release()
+	if len(body) > 0 {
+		if err := resp.PutByteContent(body); err != nil {
+			h.o.Log("serving the page", "err", err)
+			return
+		}
+	}
 	args.PutResponse(resp)
 }
 
