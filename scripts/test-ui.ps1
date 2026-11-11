@@ -59,6 +59,7 @@ try {
   while ($hwnd -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
     $hwnd = [W]::FindWindow("HifazWindow", $null); Start-Sleep -Milliseconds 300
   }
+  if ($app.HasExited) { Write-Host "the app exited with code $($app.ExitCode)" }
   Check ($hwnd -ne [IntPtr]::Zero) "window created"
   $deadline = (Get-Date).AddSeconds(30)
   while (-not [W]::IsWindowVisible($hwnd) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
@@ -96,6 +97,11 @@ finally {
   Get-Process hifaz -ErrorAction SilentlyContinue | Stop-Process -Force
   Copy-Item "$env:LOCALAPPDATA\Hifaz\app.log" $Out -ErrorAction SilentlyContinue
   Copy-Item (Join-Path $env:ProgramFiles "Hifaz\Data\service.log") $Out -ErrorAction SilentlyContinue
+  foreach ($log in "app.log", "service.log") {
+    $f = Join-Path $Out $log
+    Write-Host "----- $log -----"
+    if (Test-Path $f) { Get-Content $f -Tail 60 } else { Write-Host "(none)" }
+  }
   Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
   $p = Start-Process msiexec.exe -ArgumentList "/x `"$msiPath`" /qn /norestart" -Wait -PassThru
 }

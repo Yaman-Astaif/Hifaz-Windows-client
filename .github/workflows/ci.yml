@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write # only to push UI test screenshots to the ci/ui-screenshots branch
 
 jobs:
   # Everything that runs anywhere: format, vet (Linux and both Windows
@@ -58,6 +58,16 @@ jobs:
       - name: UI test (installed app, window, page, screenshots)
         shell: pwsh
         run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi -Out build\ui
+      - name: Publish the UI screenshots to the ci/ui-screenshots branch
+        if: always() && github.event_name == 'push'
+        shell: bash
+        run: |
+          [ -d build/ui ] || exit 0
+          cd build/ui
+          git init -q -b ci/ui-screenshots
+          git -c user.name=ci -c user.email=ci@localhost add -A
+          git -c user.name=ci -c user.email=ci@localhost commit -q -m "UI test screenshots, run ${{ github.run_number }} (${{ github.sha }})"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:ci/ui-screenshots
       - uses: actions/upload-artifact@v5
         if: always()
         with:
