@@ -6,7 +6,9 @@
 |---|---|
 | `make check` (any system) | Protocol against the shared vectors (`internal/protocol/testdata/vectors.json`, a copy of `docs/client-protocol-vectors.json` in the Hifaz repository; keep them identical). End-to-end app flows against `internal/fakeserver` and the real service engine: enrollment with MFA, sign-in with OTP, configuration changes, server-ended sessions, disconnect, quit, key renewal, refused full tunnel, wrong fingerprint, app too old. Engine checks: nonces, replay, other users, policy, refused documents. |
 | `scripts/interop-hifaz.sh <Hifaz checkout>` | The app's protocol client and service engine against the **real** Hifaz server (its own test harness, in memory): enrollment with MFA, the service accepting the server's signed documents and configuration, `version` on status calls, `renew_not_due`, renewal adopted at the next sign-in with `wg_public_key`, `app_too_old`, sign-out, and a certificate group. Copies what it needs into the checkout and removes it after. |
-| CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance), DPAPI, and a real WireGuardNT adapter: up, routes, NRPT rule, reconfigure, down, nothing left. Builds a test MSI. |
+| CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance), DPAPI, and a real WireGuardNT adapter: up, routes, NRPT rule, reconfigure, down, nothing left. Builds both MSIs as a release does. |
+| `scripts/test-install.ps1` (CI) | Installs the MSI, checks files, service, pipe, logs, start-up entry and recovery, removes it and checks nothing is left. |
+| `scripts/test-ui.ps1` (CI) | Installs the MSI and starts the app as a user would: window style (no maximize, fixed size, fits the screen), icons, version information; then, through a local debugging port (`HIFAZ_WEBVIEW_DEBUG_PORT`, set only by the test), the page: served from the app, first screen, Arabic/RTL, fonts, English, dark theme, an error, Settings, About. Screenshots of the desktop and every screen go to the `ci/ui-screenshots` branch. |
 
 ## Against a Hifaz server (test environment)
 

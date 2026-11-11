@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2 — 2026-11-11
+
+**Window**
+- Fixed: the window stayed blank after installation. The page's files
+  reached the window empty (a fault in the WebView2 library, worked around),
+  and the first screen could be lost when the app was faster than the
+  window. Both are fixed and checked on Windows for every build.
+- The window has a fixed size: no maximize button, no resizing; it is
+  sized for the screen's scaling and always fits on the screen.
+- Hifaz now has an icon (a shield), in the window, taskbar, Start menu,
+  Settings > Apps and the tray (grey when not connected). The programs carry
+  version information.
+- Script errors in the window are written to the app's log.
+
+**Testing**
+- Every build is installed and started on Windows and its window and screens
+  are checked and photographed before it can be published.
+
 ## 0.1.1 — 2026-11-11
 
 **Installer**

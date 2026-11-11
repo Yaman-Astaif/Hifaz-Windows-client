@@ -46,6 +46,14 @@ jobs:
         run: |
           $v = "${{ github.ref_name }}".Substring(1)
           scripts\test-install.ps1 -Msi "dist\Hifaz-$v-x64.msi"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Start the app and check its window and screens before publishing
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".Substring(1)
+          scripts\test-ui.ps1 -Msi "dist\Hifaz-$v-x64.msi" -Out build\ui
       - name: Publish release files
         shell: bash
         env:
