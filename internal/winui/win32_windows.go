@@ -4,6 +4,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/icon"
 )
 
 // The few Win32 calls the window and tray need, beyond x/sys/windows.
@@ -204,9 +206,9 @@ func postMessage(hwnd windows.HWND, m uint32, w, l uintptr) {
 	pPostMessageW.Call(uintptr(hwnd), uintptr(m), w, l)
 }
 
-// makeIcon builds an icon from statusPixels.
-func makeIcon(size int, connected bool) windows.Handle {
-	px := statusPixels(size, connected)
+// makeIcon builds a Windows icon of the Hifaz icon in style s.
+func makeIcon(size int, s icon.Style) windows.Handle {
+	px := icon.Pixels(size, s)
 	hdr := bitmapInfoHeader{Size: uint32(unsafe.Sizeof(bitmapInfoHeader{})), Width: int32(size),
 		Height: -int32(size), Planes: 1, BitCount: 32} // top-down
 	var bits unsafe.Pointer

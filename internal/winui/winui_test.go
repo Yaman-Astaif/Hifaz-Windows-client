@@ -3,6 +3,7 @@ package winui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/app"
@@ -35,6 +36,9 @@ func TestRoute(t *testing.T) {
 	if r, ok := route(`{"action":"ready"}`, ""); !ok || !r.ready {
 		t.Fatal("ready")
 	}
+	if r, ok := route(`{"action":"page_error","message":"`+strings.Repeat("x", 1000)+`"}`, ""); !ok || len(r.err) != maxPageError {
+		t.Fatalf("page error: %d bytes", len(r.err))
+	}
 	if r, ok := route(`{"action":"set_prefs","prefs":{"lang":"en","theme":"light","autostart":true}}`, ""); !ok || r.prefs.Lang != "en" {
 		t.Fatal("prefs")
 	}
@@ -66,28 +70,6 @@ func TestRoute(t *testing.T) {
 	}
 }
 
-func TestStatusPixels(t *testing.T) {
-	for _, connected := range []bool{true, false} {
-		px := statusPixels(32, connected)
-		if len(px) != 32*32*4 {
-			t.Fatal("size")
-		}
-		alpha := func(x, y int) byte { return px[(y*32+x)*4+3] }
-		if alpha(0, 0) != 0 || alpha(31, 31) != 0 {
-			t.Error("corners must be transparent")
-		}
-		if alpha(16, 2) == 0 {
-			t.Error("edge of the dot not drawn")
-		}
-		if centre := alpha(16, 16); connected != (centre == 255) {
-			t.Errorf("connected=%v: centre alpha %d", connected, centre)
-		}
-	}
-	if text("fr", "quit") != "Quit" || text("ar", "quit") != "إنهاء" {
-		t.Fatal("texts")
-	}
-}
-
 func TestResolvePage(t *testing.T) {
 	for _, raw := range []string{
 		"https://hifaz.invalid/index.html", "https://hifaz.invalid/", "https://HIFAZ.invalid/index.html",
@@ -110,6 +92,40 @@ func TestResolvePage(t *testing.T) {
 			t.Errorf("%s served (%d bytes)", raw, len(body))
 		} else if err == nil && string(body[:15]) != "<!doctype html>" {
 			t.Errorf("%s escaped the page tree", raw)
+		}
+	}
+}
+
+func TestViewBeforeWindowIsKept(t *testing.T) {
+	b := newViewBox()
+	if got := b.get().Screen; got != app.ScreenLoading {
+		t.Fatalf("first view: %q, want loading", got)
+	}
+	b.set(app.View{Screen: app.ScreenSetup}) // the app is faster than the window
+	calls := 0
+	b.attach(func() { calls++ })
+	if calls != 1 || b.get().Screen != app.ScreenSetup {
+		t.Fatalf("after attach: %d calls, screen %q", calls, b.get().Screen)
+	}
+	b.set(app.View{Screen: app.ScreenSignIn})
+	if calls != 2 || b.get().Screen != app.ScreenSignIn {
+		t.Fatalf("after set: %d calls, screen %q", calls, b.get().Screen)
+	}
+}
+
+func TestDebugPortArg(t *testing.T) {
+	for env, want := range map[string]string{
+		"":                                   "",
+		"--remote-debugging-port=9222":       "--remote-debugging-port=9222",
+		" --remote-debugging-port=9222 ":     "--remote-debugging-port=9222",
+		"--remote-debugging-port=80":         "",
+		"--remote-debugging-port=70000":      "",
+		"--remote-debugging-port=9222 --x":   "",
+		"--disable-web-security":             "",
+		"--remote-debugging-address=0.0.0.0": "",
+	} {
+		if got := debugPortArg(env); got != want {
+			t.Errorf("debugPortArg(%q) = %q, want %q", env, got, want)
 		}
 	}
 }

@@ -91,6 +91,10 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- The icon in Settings > Apps (and the shortcut's, from the program). -->
+    <Icon Id="HifazIcon" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="HifazIcon" />
+
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenu">
         <Shortcut Id="AppShortcut" Name="Hifaz" Description="Hifaz - حِفاظ"

@@ -35,6 +35,20 @@ foreach ($a in $Arch) {
   if (Test-Path $bin) { Remove-Item -Recurse -Force $bin }
   New-Item -ItemType Directory -Force -Path "$bin\licenses" | Out-Null
 
+  # Icon, version information and manifest, linked in from .syso files.
+  $ico = "build\hifaz.ico"
+  $res = @(
+    @{ Dir = "cmd\hifaz"; Name = "hifaz.exe"; Desc = "Hifaz" },
+    @{ Dir = "cmd\hifaz-service"; Name = "hifaz-service.exe"; Desc = "Hifaz service" }
+  )
+  Remove-Item Env:GOOS, Env:GOARCH -ErrorAction SilentlyContinue # the generator runs here
+  foreach ($r in $res) {
+    Get-ChildItem "$($r.Dir)\*.syso" -ErrorAction SilentlyContinue | Remove-Item
+    go run .\tools\winres -arch $goarch -version $Version -name $r.Name -description $r.Desc `
+      -out "$($r.Dir)\rsrc_windows_$goarch.syso" -ico $ico
+    if ($LASTEXITCODE -ne 0) { throw "writing the resources of $($r.Name) failed" }
+  }
+
   $env:GOOS = "windows"; $env:GOARCH = $goarch
   go build -trimpath -ldflags "$ldflags -H windowsgui" -o "$bin\hifaz.exe" .\cmd\hifaz
   if ($LASTEXITCODE -ne 0) { throw "building hifaz.exe ($a) failed" }
@@ -48,7 +62,7 @@ foreach ($a in $Arch) {
 
   if (-not $NoMsi) {
     $msi = "dist\Hifaz-$Version-$a.msi"
-    wix build installer\hifaz.wxs -arch $a -d "Version=$Version" -d "BinDir=$bin" -o $msi
+    wix build installer\hifaz.wxs -arch $a -d "Version=$Version" -d "BinDir=$bin" -d "IconFile=$ico" -o $msi
     if ($LASTEXITCODE -ne 0) { throw "building $msi failed" }
     $h = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
     Set-Content -Path "$msi.sha256" -Value "$h  $(Split-Path $msi -Leaf)" -Encoding ascii
@@ -56,3 +70,4 @@ foreach ($a in $Arch) {
   }
 }
 Remove-Item Env:GOOS, Env:GOARCH
+Get-ChildItem cmd\*\*.syso | Remove-Item

@@ -19,6 +19,11 @@
   }
   const act = (name, params) => send(Object.assign({ action: name }, params || {}));
 
+  // Errors in the page go to the app's log.
+  window.addEventListener("error", (ev) => {
+    send({ action: "page_error", message: String(ev.message || "") + " @" + (ev.lineno || 0) });
+  });
+
   // --- formatting --------------------------------------------------------------------
 
   function host(url) {
@@ -226,7 +231,14 @@
   // --- from the app --------------------------------------------------------------------
 
   window.hifaz = {
-    onView(v) { view = v || { screen: "loading" }; render(); },
+    onView(v) {
+      view = v || {};
+      // A screen the page does not have shows as loading, never as nothing.
+      if (!all("section[data-screen]").some((s) => s.dataset.screen === view.screen)) {
+        view = Object.assign({}, view, { screen: "loading" });
+      }
+      render();
+    },
     onPrefs(p) { prefs = Object.assign({}, prefs, p); setLang(prefs.lang); render(); },
     onApp(a) { app = Object.assign({}, app, a); render(); },
     showPage(p) { page = p || ""; render(); },

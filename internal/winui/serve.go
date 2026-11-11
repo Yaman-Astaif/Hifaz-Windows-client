@@ -7,8 +7,28 @@ import (
 	"mime"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 )
+
+// debugEnv is WebView2's variable for extra browser arguments.
+const debugEnv = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+
+// debugPortArg returns the browser argument for a debugging port when env
+// is exactly "--remote-debugging-port=N" (N from 1024 to 65535), else "".
+// The port listens on the local machine only.
+func debugPortArg(env string) string {
+	const prefix = "--remote-debugging-port="
+	v := strings.TrimSpace(env)
+	if !strings.HasPrefix(v, prefix) {
+		return ""
+	}
+	n, err := strconv.Atoi(v[len(prefix):])
+	if err != nil || n < 1024 || n > 65535 {
+		return ""
+	}
+	return prefix + strconv.Itoa(n)
+}
 
 // The page is served under a reserved name (.invalid never resolves), from
 // files embedded in the app; nothing is loaded from anywhere else.

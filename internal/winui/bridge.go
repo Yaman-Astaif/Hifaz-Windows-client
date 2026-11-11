@@ -3,6 +3,7 @@ package winui
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/app"
 )
@@ -13,22 +14,29 @@ type message struct {
 	app.Action
 	Prefs *Prefs `json:"prefs,omitempty"`
 	URL   string `json:"url,omitempty"`
+	// Message is a page error's text (page_error).
+	Message string `json:"message,omitempty"`
 }
 
 // Window-level requests; everything else goes to the app.
 const (
-	msgReady    = "ready"     // the page has loaded: send it everything
-	msgSetPrefs = "set_prefs" // language, theme, start with Windows
-	msgOpenURL  = "open_url"  // open the administrator's download page
+	msgReady    = "ready"      // the page has loaded: send it everything
+	msgSetPrefs = "set_prefs"  // language, theme, start with Windows
+	msgOpenURL  = "open_url"   // open the administrator's download page
+	msgError    = "page_error" // a script error in the page, for the log
 )
 
+// maxPageError bounds how much of a page error goes to the log.
+const maxPageError = 300
+
 // route decides what a page message asks for. It returns exactly one of:
-// ready, new prefs, a URL to open, or an app action. Anything malformed or
+// ready, new prefs, a URL to open, a page error, or an app action. Anything malformed or
 // not allowed is dropped (ok false).
 type routed struct {
 	ready  bool
 	prefs  *Prefs
 	url    string
+	err    string
 	action *app.Action
 }
 
@@ -53,6 +61,15 @@ func route(raw string, allowedURL string) (routed, bool) {
 			return routed{}, false
 		}
 		return routed{url: m.URL}, true
+	case msgError:
+		e := strings.ToValidUTF8(m.Message, "?")
+		if len(e) > maxPageError {
+			e = strings.ToValidUTF8(e[:maxPageError], "")
+		}
+		if e == "" {
+			e = "unknown"
+		}
+		return routed{err: e}, true
 	}
 	a := m.Action
 	return routed{action: &a}, true

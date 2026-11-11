@@ -7,12 +7,13 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
 	"golang.org/x/sys/windows"
+
+	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/icon"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/app"
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/protocol"
@@ -63,15 +64,10 @@ type windowHost struct {
 	webview *edge.Chromium
 	prefs   Prefs
 
-	icons          [2]windows.Handle // [not connected, connected], tray size
-	bigIcons       [2]windows.Handle
+	icons          [2]windows.Handle // tray: [not connected, connected]
+	appIcons       [2]windows.Handle // the window's: [small, big]
 	trayAdded      bool
 	taskbarCreated uint32
-
-	// Set by the app's goroutine, read on the window thread.
-	mu       sync.Mutex
-	view     app.View
-	quitDone bool
 
 	quitting bool
 }
@@ -100,6 +96,8 @@ func Run(o Options) error {
 		return err
 	}
 	h.addTray()
+	hwnd := h.hwnd
+	views.attach(func() { postMessage(hwnd, wmAppView, 0, 0) })
 	if !o.Background {
 		h.show()
 	}
@@ -115,20 +113,12 @@ func Run(o Options) error {
 	return nil
 }
 
-// OnView is the app's OnView callback: it may be called from any goroutine.
-func OnView(v app.View) {
-	h := theHost.Load()
-	if h == nil {
-		return
-	}
-	h.mu.Lock()
-	h.view = v
-	hwnd := h.hwnd
-	h.mu.Unlock()
-	if hwnd != 0 { // before the window exists, the page asks for it when ready
-		postMessage(hwnd, wmAppView, 0, 0)
-	}
-}
+// views is the app's latest view; see viewBox.
+var views = newViewBox()
+
+// OnView is the app's OnView callback: it may be called from any
+// goroutine, also before Run has created the window.
+func OnView(v app.View) { views.set(v) }
 
 // ShowExisting asks a running instance to show its window; it reports
 // whether one was found.
@@ -164,13 +154,9 @@ func (h *windowHost) createWindow() error {
 	if w == 0 {
 		return err
 	}
-	h.mu.Lock()
 	h.hwnd = windows.HWND(w)
-	h.mu.Unlock()
 	h.placeWindow()
 	h.makeIcons()
-	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconSmall, uintptr(h.icons[0]))
-	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconBig, uintptr(h.bigIcons[0]))
 	return nil
 }
 
@@ -202,13 +188,11 @@ func (h *windowHost) placeWindow() {
 	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(x), uintptr(y), uintptr(w), uintptr(ht), swpNoZOrder|swpNoActivate)
 }
 
+// makeIcons draws the icons for the window's current scaling. The old ones
+// are destroyed only once the window (and, after updateTray, the shell)
+// holds the new ones.
 func (h *windowHost) makeIcons() {
-	for _, i := range h.icons {
-		destroyIcon(i)
-	}
-	for _, i := range h.bigIcons {
-		destroyIcon(i)
-	}
+	oldTray, oldApp := h.icons, h.appIcons
 	small, _, _ := pGetSystemMetricsForDpi.Call(smCxSmIcon, uintptr(h.dpi()))
 	big, _, _ := pGetSystemMetricsForDpi.Call(smCxIcon, uintptr(h.dpi()))
 	if small == 0 {
@@ -217,9 +201,15 @@ func (h *windowHost) makeIcons() {
 	if big == 0 {
 		big = 32
 	}
-	for i, connected := range []bool{false, true} {
-		h.icons[i] = makeIcon(int(small), connected)
-		h.bigIcons[i] = makeIcon(int(big), connected)
+	h.icons = [2]windows.Handle{makeIcon(int(small), icon.Disconnected), makeIcon(int(small), icon.Connected)}
+	h.appIcons = [2]windows.Handle{makeIcon(int(small), icon.App), makeIcon(int(big), icon.App)}
+	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconSmall, uintptr(h.appIcons[0]))
+	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconBig, uintptr(h.appIcons[1]))
+	if h.trayAdded {
+		h.updateTray()
+	}
+	for _, i := range append(oldTray[:], oldApp[:]...) {
+		destroyIcon(i)
 	}
 }
 
@@ -297,7 +287,6 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
 			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 		h.makeIcons()
-		h.updateTray()
 		return 0
 	case wmClose:
 		h.hide() // the app keeps running in the tray
@@ -329,11 +318,13 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 func (h *windowHost) createWebView() error {
 	wv := edge.NewChromium()
 	wv.DataPath = h.o.DataDir
-	// WebView2's own setting for extra browser arguments (the UI tests open
-	// a debugging port with it). The library's loader does not read it, so
-	// it is passed on here; it only ever comes from the user's environment.
-	if args := os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"); args != "" {
-		wv.AdditionalBrowserArgs = strings.Fields(args)
+	// The library's loader ignores WebView2's own variable for extra browser
+	// arguments (and clears it). Only a local debugging port is taken from
+	// it, for the UI tests; any other value is ignored.
+	debugArg := debugPortArg(os.Getenv(debugEnv))
+	if debugArg != "" {
+		wv.AdditionalBrowserArgs = []string{debugArg}
+		h.o.Log("the page can be inspected on a local debugging port", "arg", debugArg)
 	}
 	wv.SetErrorCallback(func(err error) { h.o.Log("web view", "err", err) })
 	wv.MessageCallback = func(message string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
@@ -348,12 +339,9 @@ func (h *windowHost) createWebView() error {
 		return errors.New("WebView2 is not available")
 	}
 	h.webview = wv
-	// DevTools stay off, unless a debugging port was asked for explicitly
-	// (the UI tests do; it is never the case for a normal start).
-	devtools := strings.Contains(os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"), "--remote-debugging-port")
 	wv.SetBackgroundColour(0xf6, 0xf5, 0xef, 0xff) // the page's colour: no white flash
 	if s, err := wv.GetSettings(); err == nil {
-		s.PutAreDevToolsEnabled(devtools)
+		s.PutAreDevToolsEnabled(debugArg != "")
 		s.PutAreDefaultContextMenusEnabled(false)
 		s.PutIsStatusBarEnabled(false)
 		s.PutIsZoomControlEnabled(false)
@@ -412,9 +400,8 @@ func (h *windowHost) serve(req *edge.ICoreWebView2WebResourceRequest, args *edge
 
 // onPageMessage handles a message from the page (on the window thread).
 func (h *windowHost) onPageMessage(raw string) {
-	h.mu.Lock()
-	allowed := allowedDownload(&h.view)
-	h.mu.Unlock()
+	v := views.get()
+	allowed := allowedDownload(&v)
 	r, ok := route(raw, allowed)
 	if !ok {
 		return
@@ -427,6 +414,8 @@ func (h *windowHost) onPageMessage(raw string) {
 		h.pushView()
 	case r.prefs != nil:
 		h.setPrefs(*r.prefs)
+	case r.err != "":
+		h.o.Log("page error", "err", r.err)
 	case r.url != "":
 		windows.ShellExecute(windows.Handle(h.hwnd), utf16("open"), utf16(r.url), nil, nil, swShow)
 	case r.action != nil:
@@ -446,10 +435,7 @@ func (h *windowHost) eval(fn string, v any) {
 }
 
 func (h *windowHost) pushView() {
-	h.mu.Lock()
-	v := h.view
-	h.mu.Unlock()
-	h.eval("onView", v)
+	h.eval("onView", views.get())
 	h.updateTray()
 }
 
@@ -472,9 +458,7 @@ func (h *windowHost) setPrefs(p Prefs) {
 // --- tray ---------------------------------------------------------------------------
 
 func (h *windowHost) connected() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.view.Screen == app.ScreenConnected
+	return views.get().Screen == app.ScreenConnected
 }
 
 func (h *windowHost) trayData() *notifyIconData {
@@ -506,11 +490,6 @@ func (h *windowHost) updateTray() {
 		return
 	}
 	pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(h.trayData())))
-	icon := h.icons[0]
-	if h.connected() {
-		icon = h.icons[1]
-	}
-	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconSmall, uintptr(icon))
 }
 
 func (h *windowHost) removeTray() {
