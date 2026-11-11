@@ -52,6 +52,18 @@ jobs:
       - name: Install, check, remove (x64)
         shell: pwsh
         run: scripts\test-install.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: UI test (installed app, window, page, screenshots)
+        shell: pwsh
+        run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi -Out build\ui
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: hifaz-ui-test
+          path: build/ui/
+          retention-days: 14
       - uses: actions/upload-artifact@v5
         with:
           name: hifaz-msi-test

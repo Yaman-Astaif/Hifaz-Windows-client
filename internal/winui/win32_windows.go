@@ -41,6 +41,9 @@ var (
 	pSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	pSetWindowPos                  = user32.NewProc("SetWindowPos")
 	pMessageBoxW                   = user32.NewProc("MessageBoxW")
+	pMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
+	pGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
+	pAdjustWindowRectExForDpi      = user32.NewProc("AdjustWindowRectExForDpi")
 	pCreateDIBSection              = gdi32.NewProc("CreateDIBSection")
 	pCreateBitmap                  = gdi32.NewProc("CreateBitmap")
 	pDeleteObject                  = gdi32.NewProc("DeleteObject")
@@ -53,7 +56,6 @@ const (
 	wmClose           = 0x0010
 	wmQueryEndSession = 0x0011
 	wmEndSession      = 0x0016
-	wmGetMinMaxInfo   = 0x0024
 	wmSetIcon         = 0x0080
 	wmCommand         = 0x0111
 	wmNull            = 0x0000
@@ -62,8 +64,10 @@ const (
 	wmDpiChanged      = 0x02E0
 	wmApp             = 0x8000
 
-	wsOverlappedWindow = 0x00CF0000
-	cwUseDefault       = 0x80000000 // CW_USEDEFAULT
+	// A fixed-size window: title bar, system menu and minimize only (no
+	// maximize, no resizing border). The page scrolls if it needs more room.
+	wsFixedWindow = 0x00CA0000 // WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX
+	cwUseDefault  = 0x80000000 // CW_USEDEFAULT
 
 	swHide    = 0
 	swShow    = 5
@@ -125,6 +129,13 @@ type point struct{ X, Y int32 }
 
 type rect struct{ Left, Top, Right, Bottom int32 }
 
+type monitorInfo struct {
+	Size    uint32
+	Monitor rect
+	Work    rect
+	Flags   uint32
+}
+
 type msg struct {
 	HWnd    windows.HWND
 	Message uint32
@@ -133,10 +144,6 @@ type msg struct {
 	Time    uint32
 	Pt      point
 	private uint32
-}
-
-type minMaxInfo struct {
-	Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize point
 }
 
 type iconInfo struct {

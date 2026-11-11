@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	stdlog "log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -58,6 +59,7 @@ func run() int {
 		defer logf.Close()
 		logOut = logf
 	}
+	stdlog.SetOutput(logOut) // the WebView2 library reports some failures here
 	log := slog.New(slog.NewTextHandler(logOut, nil))
 	logFn := func(msg string, args ...any) { log.Info(msg, args...) }
 	log.Info("starting", "version", version.Version)

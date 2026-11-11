@@ -47,10 +47,8 @@ const (
 	menuConnect    = 2
 	menuDisconnect = 3
 	menuQuit       = 4
-	baseWidth      = 460 // window size at 96 DPI
-	baseHeight     = 780
-	minWidth       = 380
-	minHeight      = 560
+	baseWidth      = 460 // page size at 96 DPI (client area)
+	baseHeight     = 760
 )
 
 // Options configure Run.
@@ -168,7 +166,7 @@ func (h *windowHost) createWindow() error {
 	tc, _, _ := pRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(utf16("TaskbarCreated"))))
 	h.taskbarCreated = uint32(tc)
 	w, _, err := pCreateWindowExW.Call(0, uintptr(unsafe.Pointer(utf16(ClassName))),
-		uintptr(unsafe.Pointer(utf16(version.Name))), wsOverlappedWindow,
+		uintptr(unsafe.Pointer(utf16(version.Name))), wsFixedWindow,
 		cwUseDefault, cwUseDefault, baseWidth, baseHeight, 0, 0, uintptr(instance), 0)
 	if w == 0 {
 		return err
@@ -176,7 +174,7 @@ func (h *windowHost) createWindow() error {
 	h.mu.Lock()
 	h.hwnd = windows.HWND(w)
 	h.mu.Unlock()
-	h.scaleWindow()
+	h.placeWindow()
 	h.makeIcons()
 	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconSmall, uintptr(h.icons[0]))
 	pSendMessageW.Call(uintptr(h.hwnd), wmSetIcon, iconBig, uintptr(h.bigIcons[0]))
@@ -191,12 +189,24 @@ func (h *windowHost) dpi() int {
 	return int(d)
 }
 
-func (h *windowHost) scale(v int) int { return v * h.dpi() / 96 }
-
-// scaleWindow sizes the window for the monitor's DPI.
-func (h *windowHost) scaleWindow() {
-	pSetWindowPos.Call(uintptr(h.hwnd), 0, 0, 0, uintptr(h.scale(baseWidth)), uintptr(h.scale(baseHeight)),
-		swpNoZOrder|swpNoActivate|0x0002 /* SWP_NOMOVE */)
+// placeWindow sizes the window for the monitor's DPI, no larger than the
+// monitor's work area, and centres it there.
+func (h *windowHost) placeWindow() {
+	dpi := h.dpi()
+	client := rect{Right: int32(baseWidth * dpi / 96), Bottom: int32(baseHeight * dpi / 96)}
+	pAdjustWindowRectExForDpi.Call(uintptr(unsafe.Pointer(&client)), wsFixedWindow, 0, 0, uintptr(dpi))
+	w, ht := client.Right-client.Left, client.Bottom-client.Top
+	x, y := int32(0), int32(0)
+	mon, _, _ := pMonitorFromWindow.Call(uintptr(h.hwnd), 2 /* MONITOR_DEFAULTTONEAREST */)
+	mi := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
+	if r, _, _ := pGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r != 0 {
+		work := mi.Work
+		ht = min(ht, work.Bottom-work.Top)
+		w = min(w, work.Right-work.Left)
+		x = work.Left + (work.Right-work.Left-w)/2
+		y = work.Top + (work.Bottom-work.Top-ht)/2
+	}
+	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(x), uintptr(y), uintptr(w), uintptr(ht), swpNoZOrder|swpNoActivate)
 }
 
 func (h *windowHost) makeIcons() {
@@ -276,10 +286,6 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 		h.makeIcons()
 		h.updateTray()
-		return 0
-	case wmGetMinMaxInfo:
-		mm := (*minMaxInfo)(osPointer(l))
-		mm.MinTrackSize = point{int32(h.scale(minWidth)), int32(h.scale(minHeight))}
 		return 0
 	case wmClose:
 		h.hide() // the app keeps running in the tray
