@@ -57,7 +57,7 @@ try {
   $hwnd = [IntPtr]::Zero
   $deadline = (Get-Date).AddSeconds(30)
   while ($hwnd -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
-    $hwnd = [W]::FindWindow("HifazWindow", $null); Start-Sleep -Milliseconds 300
+    $hwnd = [W]::FindWindow("HifazWindow", [NullString]::Value); Start-Sleep -Milliseconds 300
   }
   if ($app.HasExited) { Write-Host "the app exited with code $($app.ExitCode)" }
   Check ($hwnd -ne [IntPtr]::Zero) "window created"

@@ -99,9 +99,12 @@ func Run(o Options) error {
 	}
 	theHost.Store(h)
 	if err := h.createWindow(); err != nil {
+		h.o.Log("creating the window failed", "err", err)
 		return err
 	}
+	h.o.Log("window created")
 	if err := h.createWebView(); err != nil {
+		h.o.Log("the web view could not be created", "err", err)
 		messageBox(version.Name, text(h.prefs.Lang, "noWebView"))
 		pDestroyWindow.Call(uintptr(h.hwnd))
 		return err
@@ -346,6 +349,7 @@ func (h *windowHost) createWebView() error {
 	wv.AddWebResourceRequestedFilter(pageOrigin+"/*", edge.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
 	wv.Resize()
 	wv.Navigate(pageURL)
+	h.o.Log("web view ready; loading the page")
 	return nil
 }
 
@@ -362,6 +366,9 @@ func (h *windowHost) serve(req *edge.ICoreWebView2WebResourceRequest, args *edge
 				}
 			}
 		}
+	}
+	if status != 200 {
+		h.o.Log("page request not found", "status", status)
 	}
 	headers := "Content-Type: " + ctype + "\r\nContent-Security-Policy: " + pageCSP +
 		"\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store"
@@ -385,6 +392,7 @@ func (h *windowHost) onPageMessage(raw string) {
 	}
 	switch {
 	case r.ready:
+		h.o.Log("page loaded")
 		h.pushApp()
 		h.pushPrefs()
 		h.pushView()
