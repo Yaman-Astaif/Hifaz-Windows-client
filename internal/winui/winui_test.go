@@ -115,14 +115,13 @@ func TestViewBeforeWindowIsKept(t *testing.T) {
 
 func TestDebugPortArg(t *testing.T) {
 	for env, want := range map[string]string{
-		"":                                   "",
-		"--remote-debugging-port=9222":       "--remote-debugging-port=9222",
-		" --remote-debugging-port=9222 ":     "--remote-debugging-port=9222",
-		"--remote-debugging-port=80":         "",
-		"--remote-debugging-port=70000":      "",
-		"--remote-debugging-port=9222 --x":   "",
-		"--disable-web-security":             "",
-		"--remote-debugging-address=0.0.0.0": "",
+		"":                          "",
+		"9222":                      "--remote-debugging-port=9222",
+		" 9222 ":                    "--remote-debugging-port=9222",
+		"80":                        "",
+		"70000":                     "",
+		"9222 --x":                  "",
+		"--remote-debugging-port=1": "",
 	} {
 		if got := debugPortArg(env); got != want {
 			t.Errorf("debugPortArg(%q) = %q, want %q", env, got, want)

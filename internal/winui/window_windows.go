@@ -318,9 +318,7 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 func (h *windowHost) createWebView() error {
 	wv := edge.NewChromium()
 	wv.DataPath = h.o.DataDir
-	// The library's loader ignores WebView2's own variable for extra browser
-	// arguments (and clears it). Only a local debugging port is taken from
-	// it, for the UI tests; any other value is ignored.
+	// A local debugging port, only when asked for (see debugEnv).
 	debugArg := debugPortArg(os.Getenv(debugEnv))
 	if debugArg != "" {
 		wv.AdditionalBrowserArgs = []string{debugArg}

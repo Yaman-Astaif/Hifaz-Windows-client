@@ -11,23 +11,20 @@ import (
 	"strings"
 )
 
-// debugEnv is WebView2's variable for extra browser arguments.
-const debugEnv = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+// debugEnv names a port on which the page can be inspected (the UI tests
+// use it). WebView2's own variable for browser arguments cannot be used:
+// the WebView2 library clears it when the program starts.
+const debugEnv = "HIFAZ_WEBVIEW_DEBUG_PORT"
 
 // debugPortArg returns the browser argument for a debugging port when env
-// is exactly "--remote-debugging-port=N" (N from 1024 to 65535), else "".
-// The port listens on the local machine only.
+// is a port number from 1024 to 65535, else "". The port listens on the
+// local machine only.
 func debugPortArg(env string) string {
-	const prefix = "--remote-debugging-port="
-	v := strings.TrimSpace(env)
-	if !strings.HasPrefix(v, prefix) {
-		return ""
-	}
-	n, err := strconv.Atoi(v[len(prefix):])
+	n, err := strconv.Atoi(strings.TrimSpace(env))
 	if err != nil || n < 1024 || n > 65535 {
 		return ""
 	}
-	return prefix + strconv.Itoa(n)
+	return "--remote-debugging-port=" + strconv.Itoa(n)
 }
 
 // The page is served under a reserved name (.invalid never resolves), from

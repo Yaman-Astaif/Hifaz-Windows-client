@@ -1,7 +1,6 @@
 // A minimal Chrome DevTools Protocol client for the UI tests (Node 22+,
 // built-in fetch and WebSocket). It talks to the app's WebView2 through
-// the debugging port that WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS opens; the
-// app itself is not changed for testing.
+// the debugging port the app opens when HIFAZ_WEBVIEW_DEBUG_PORT is set.
 import { writeFile } from "node:fs/promises";
 
 export async function connect(port, { timeoutMs = 60000 } = {}) {

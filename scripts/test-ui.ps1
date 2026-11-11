@@ -49,7 +49,7 @@ try {
   $p = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart /l*v `"$Out\install.log`"" -Wait -PassThru
   if ($p.ExitCode -ne 0) { throw "install failed: $($p.ExitCode)" }
 
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+  $env:HIFAZ_WEBVIEW_DEBUG_PORT = "$port"
   $app = Start-Process $exe -PassThru
   Start-Sleep -Seconds 2
 
@@ -102,7 +102,7 @@ finally {
     Write-Host "----- $log -----"
     if (Test-Path $f) { Get-Content $f -Tail 60 } else { Write-Host "(none)" }
   }
-  Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+  Remove-Item Env:HIFAZ_WEBVIEW_DEBUG_PORT -ErrorAction SilentlyContinue
   $p = Start-Process msiexec.exe -ArgumentList "/x `"$msiPath`" /qn /norestart" -Wait -PassThru
 }
 if ($failed.Count) { throw "$($failed.Count) UI check(s) failed" }
