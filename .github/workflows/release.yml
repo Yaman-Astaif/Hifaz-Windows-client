@@ -41,6 +41,11 @@ jobs:
           dotnet tool install --global wix --version 5.0.2
           $v = "${{ github.ref_name }}".Substring(1)
           scripts\build.ps1 -Version $v -Release
+      - name: Install, check, remove (x64) before publishing
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".Substring(1)
+          scripts\test-install.ps1 -Msi "dist\Hifaz-$v-x64.msi"
       - name: Publish release files
         shell: bash
         env:

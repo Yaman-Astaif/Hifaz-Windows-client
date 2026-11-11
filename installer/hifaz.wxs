@@ -27,8 +27,14 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Hifaz is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- WireGuardNT needs Windows 10 or later. -->
-    <Launch Condition="Installed OR WINDOWSBUILDNUMBER &gt;= 10240"
+    <!-- WireGuardNT needs Windows 10 or later. CurrentMajorVersionNumber
+         exists only from Windows 10 on, and unlike the installer's own
+         version properties it is not changed by compatibility settings. -->
+    <Property Id="WINMAJORVERSION">
+      <RegistrySearch Id="WinMajorVersion" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentMajorVersionNumber" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR WINMAJORVERSION"
             Message="Hifaz needs Windows 10 or later." />
 
     <Property Id="ARPCONTACT" Value="Yaman Astaif" />

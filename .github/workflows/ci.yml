@@ -49,6 +49,9 @@ jobs:
         run: |
           dotnet tool install --global wix --version 5.0.2
           scripts\build.ps1 -Version 0.0.${{ github.run_number }} -Release
+      - name: Install, check, remove (x64)
+        shell: pwsh
+        run: scripts\test-install.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi
       - uses: actions/upload-artifact@v5
         with:
           name: hifaz-msi-test

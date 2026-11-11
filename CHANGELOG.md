@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — 2026-11-11
+
+**Installer**
+- Fixed: the installer refused to run on Windows 10 and 11 ("Hifaz needs
+  Windows 10 or later"). It now reads the Windows version from the system
+  itself.
+- Every build is now installed, checked and removed on a Windows machine
+  before it can be published.
+
 ## 0.1.0 — 2026-11-11
 
 First release. **Needs a Hifaz server 0.8.0 or later** (client protocol
