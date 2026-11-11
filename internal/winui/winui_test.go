@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/app"
+	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/ui"
 )
 
 func TestPrefs(t *testing.T) {
@@ -84,5 +85,31 @@ func TestStatusPixels(t *testing.T) {
 	}
 	if text("fr", "quit") != "Quit" || text("ar", "quit") != "إنهاء" {
 		t.Fatal("texts")
+	}
+}
+
+func TestResolvePage(t *testing.T) {
+	for _, raw := range []string{
+		"https://hifaz.invalid/index.html", "https://hifaz.invalid/", "https://HIFAZ.invalid/index.html",
+		"https://hifaz.invalid/assets/app.js", "https://hifaz.invalid/assets/style.css",
+		"https://hifaz.invalid/assets/fonts/body-ar-400.woff2", "https://hifaz.invalid/index.html?x=1#y",
+	} {
+		body, ctype, err := resolvePage(ui.Files, raw)
+		if err != nil || len(body) == 0 || ctype == "" {
+			t.Errorf("%s: %d bytes, %q, %v", raw, len(body), ctype, err)
+		}
+	}
+	if _, ctype, _ := resolvePage(ui.Files, pageURL); ctype != "text/html; charset=utf-8" {
+		t.Errorf("index content type %q", ctype)
+	}
+	for _, raw := range []string{
+		"https://hifaz.invalid/../../etc/passwd", "https://hifaz.invalid/nope.html",
+		"https://evil.example.com/index.html", "http://hifaz.invalid/index.html", "::bad",
+	} {
+		if body, _, err := resolvePage(ui.Files, raw); err == nil && raw != "https://hifaz.invalid/../../etc/passwd" {
+			t.Errorf("%s served (%d bytes)", raw, len(body))
+		} else if err == nil && string(body[:15]) != "<!doctype html>" {
+			t.Errorf("%s escaped the page tree", raw)
+		}
 	}
 }

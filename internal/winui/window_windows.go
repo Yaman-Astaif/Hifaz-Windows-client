@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"mime"
-	"net/url"
-	"path"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -24,14 +22,6 @@ import (
 // ClassName is the window class; a second start of the app finds the first
 // by it.
 const ClassName = "HifazWindow"
-
-// The page is served under a reserved name (.invalid never resolves), from
-// files embedded in the app; nothing is loaded from anywhere else.
-const (
-	pageOrigin = "https://hifaz.invalid"
-	pageURL    = pageOrigin + "/index.html"
-	pageCSP    = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
-)
 
 // Messages the window posts to itself.
 const (
@@ -320,6 +310,12 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 func (h *windowHost) createWebView() error {
 	wv := edge.NewChromium()
 	wv.DataPath = h.o.DataDir
+	// WebView2's own setting for extra browser arguments (the UI tests open
+	// a debugging port with it). The library's loader does not read it, so
+	// it is passed on here; it only ever comes from the user's environment.
+	if args := os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"); args != "" {
+		wv.AdditionalBrowserArgs = strings.Fields(args)
+	}
 	wv.SetErrorCallback(func(err error) { h.o.Log("web view", "err", err) })
 	wv.MessageCallback = func(message string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
 		h.onPageMessage(message)
@@ -356,19 +352,16 @@ func (h *windowHost) createWebView() error {
 // serve answers the page's requests from the embedded files.
 func (h *windowHost) serve(req *edge.ICoreWebView2WebResourceRequest, args *edge.ICoreWebView2WebResourceRequestedEventArgs) {
 	status, reason, body, ctype := 404, "Not Found", []byte(nil), "text/plain"
-	if raw, err := req.GetUri(); err == nil {
-		if u, err := url.Parse(raw); err == nil && strings.HasPrefix(raw, pageOrigin+"/") {
-			name := strings.TrimPrefix(path.Clean(u.Path), "/")
-			if data, err := fs.ReadFile(h.o.Files, name); err == nil {
-				status, reason, body = 200, "OK", data
-				if t := mime.TypeByExtension(path.Ext(name)); t != "" {
-					ctype = t
-				}
-			}
+	raw, err := req.GetUri()
+	if err == nil {
+		var b []byte
+		if b, ctype, err = resolvePage(h.o.Files, raw); err == nil {
+			status, reason, body = 200, "OK", b
 		}
 	}
 	if status != 200 {
-		h.o.Log("page request not found", "status", status)
+		ctype = "text/plain"
+		h.o.Log("page request not served", "uri", raw, "err", err)
 	}
 	headers := "Content-Type: " + ctype + "\r\nContent-Security-Policy: " + pageCSP +
 		"\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store"
