@@ -41,6 +41,7 @@ var (
 	pSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	pSetWindowPos                  = user32.NewProc("SetWindowPos")
 	pMessageBoxW                   = user32.NewProc("MessageBoxW")
+	pGetClientRect                 = user32.NewProc("GetClientRect")
 	pMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
 	pGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
 	pAdjustWindowRectExForDpi      = user32.NewProc("AdjustWindowRectExForDpi")

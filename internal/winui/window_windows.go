@@ -227,12 +227,33 @@ func (h *windowHost) show() {
 	pShowWindow.Call(uintptr(h.hwnd), swRestore)
 	pShowWindow.Call(uintptr(h.hwnd), swShow)
 	pSetForegroundWindow.Call(uintptr(h.hwnd))
+	h.fitWebView(true)
 	if h.webview != nil {
 		h.webview.Focus()
 	}
 }
 
-func (h *windowHost) hide() { pShowWindow.Call(uintptr(h.hwnd), swHide) }
+func (h *windowHost) hide() {
+	h.fitWebView(false)
+	pShowWindow.Call(uintptr(h.hwnd), swHide)
+}
+
+// fitWebView makes the web view fill the window and sets whether it is
+// visible: WebView2 is told explicitly whenever the window is shown,
+// hidden or minimized, since the window starts hidden.
+func (h *windowHost) fitWebView(visible bool) {
+	if h.webview == nil {
+		return
+	}
+	if !visible {
+		h.webview.Hide()
+		return
+	}
+	h.webview.Resize()
+	if err := h.webview.Show(); err != nil {
+		h.o.Log("showing the web view", "err", err)
+	}
+}
 
 func (h *windowHost) visible() bool {
 	r, _, _ := pIsWindowVisible.Call(uintptr(h.hwnd))
@@ -268,9 +289,7 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		pDestroyWindow.Call(uintptr(hwnd))
 		return 0
 	case wmSize:
-		if h.webview != nil {
-			h.webview.Resize()
-		}
+		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
 		return 0
 	case wmDpiChanged:
 		// Take the size Windows suggests for the new monitor.
@@ -329,8 +348,12 @@ func (h *windowHost) createWebView() error {
 		return errors.New("WebView2 is not available")
 	}
 	h.webview = wv
+	// DevTools stay off, unless a debugging port was asked for explicitly
+	// (the UI tests do; it is never the case for a normal start).
+	devtools := strings.Contains(os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"), "--remote-debugging-port")
+	wv.SetBackgroundColour(0xf6, 0xf5, 0xef, 0xff) // the page's colour: no white flash
 	if s, err := wv.GetSettings(); err == nil {
-		s.PutAreDevToolsEnabled(false)
+		s.PutAreDevToolsEnabled(devtools)
 		s.PutAreDefaultContextMenusEnabled(false)
 		s.PutIsStatusBarEnabled(false)
 		s.PutIsZoomControlEnabled(false)
@@ -343,9 +366,11 @@ func (h *windowHost) createWebView() error {
 	wv.PutIsPasswordAutosaveEnabled(false)
 	wv.PutIsGeneralAutofillEnabled(false)
 	wv.AddWebResourceRequestedFilter(pageOrigin+"/*", edge.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
-	wv.Resize()
+	h.fitWebView(true)
 	wv.Navigate(pageURL)
-	h.o.Log("web view ready; loading the page")
+	var rc rect
+	pGetClientRect.Call(uintptr(h.hwnd), uintptr(unsafe.Pointer(&rc)))
+	h.o.Log("web view ready; loading the page", "width", rc.Right-rc.Left, "height", rc.Bottom-rc.Top)
 	return nil
 }
 
