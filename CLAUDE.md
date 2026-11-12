@@ -15,7 +15,7 @@ Owner: Yaman Astaif. Full description: `README.md`; security model: `docs/archit
 
 ## Commands
 - `make check`: gofmt, vet (Linux, Windows x64 and arm64), tests with `-race`, cross-builds. Must pass before pushing.
-- `scripts/interop-hifaz.sh ../Hifaz`: the protocol client against the real server code (Git Bash).
+- `scripts/interop-hifaz.sh ../Hifaz`: the protocol client against the real server code.
 - MSI, real adapter, install and UI tests run on Windows in CI (`docs/testing.md`); `scripts/build.ps1` builds the MSI.
 
 ## Rules from the owner

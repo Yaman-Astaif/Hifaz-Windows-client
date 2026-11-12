@@ -86,13 +86,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.py"
             ],
             "timeout": 20
           }
@@ -104,13 +100,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -122,13 +114,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -140,13 +128,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -158,13 +142,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -176,13 +156,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -194,13 +170,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }
@@ -212,13 +184,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
+            "command": "python3",
             "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-action.ps1"
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/log_action.py"
             ],
             "async": true
           }

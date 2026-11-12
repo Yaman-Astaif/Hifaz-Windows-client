@@ -26,7 +26,7 @@ You never edit files. Steps:
    (`git diff --no-index`) and report any difference.
 4. If `../Hifaz` is missing, say so and check only this side.
 5. When Go is installed, run the interop test against the server checkout:
-   `scripts/interop-hifaz.sh ../Hifaz` (needs Git Bash on Windows). It copies
+   `scripts/interop-hifaz.sh ../Hifaz` (in WSL). It copies
    files into the server checkout and removes them after. Report its result.
 
 Report:
