@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ type Server struct {
 	ts       *httptest.Server
 	prefix   string // path prefix of the public URL, "" or like "/vpn"
 	identity ed25519.PrivateKey
+	requests atomic.Int64      // every HTTP request, answered or not
 	caKey    *ecdsa.PrivateKey // signs device certificates
 	caCert   *x509.Certificate
 
@@ -140,7 +142,10 @@ func New(t testing.TB, opts Options) *Server {
 	mux.HandleFunc("GET "+api+"/session", s.signed(s.handleSession))
 	mux.HandleFunc("POST "+api+"/logout", s.signed(s.handleLogout))
 	mux.HandleFunc("POST "+api+"/keys/renew", s.signed(s.handleRenew))
-	s.ts = httptest.NewUnstartedServer(mux)
+	s.ts = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.requests.Add(1)
+		mux.ServeHTTP(w, r)
+	}))
 	s.ts.TLS = &tls.Config{ClientAuth: tls.RequestClientCert} // as a proxy for certificate groups
 	s.ts.StartTLS()
 	t.Cleanup(s.ts.Close)
@@ -220,6 +225,17 @@ func (s *Server) HTTPClientWith(cert *tls.Certificate) *http.Client {
 func (s *Server) Pin() protocol.Pin {
 	pub := s.identity.Public().(ed25519.PublicKey)
 	return protocol.Pin{Fingerprint: protocol.FingerprintOf(pub), Key: pub}
+}
+
+// Requests is the number of HTTP requests the server has received.
+func (s *Server) Requests() int { return int(s.requests.Load()) }
+
+// ExpireSteps ends every enrollment and sign-in step, as if they had timed
+// out: the next call with a step token gets invalid_step.
+func (s *Server) ExpireSteps() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.steps)
 }
 
 // AddUser creates a user.

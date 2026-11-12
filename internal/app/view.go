@@ -41,6 +41,9 @@ type View struct {
 	// Replacing: the user is adding a server while one is enrolled; the
 	// old one is removed when the new enrollment succeeds.
 	Replacing bool `json:"replacing,omitempty"`
+	// Link prefills the setup screen after an enrollment step timed out on
+	// the server, so the user only presses Continue. It is never logged.
+	Link string `json:"link,omitempty"`
 }
 
 // ViewError is a failure, by code; the window translates it.

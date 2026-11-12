@@ -75,6 +75,7 @@ type Controller struct {
 }
 
 type enrollment struct {
+	raw          string // the link as pasted, to fill in again if a step times out
 	link         protocol.EnrollLink
 	client       *protocol.Client
 	pin          protocol.Pin
@@ -278,12 +279,20 @@ func (c *Controller) enrollCancel() {
 
 func (c *Controller) enrollLink(raw string) {
 	replacing := c.view.Replacing
+	raw = strings.TrimSpace(raw)
 	link, err := protocol.ParseEnrollLink(raw)
 	if err != nil {
 		c.fail(errInvalidLink)
 		return
 	}
 	c.setBusy(true)
+	// The service is needed only at the end, but by then the server has used
+	// up its steps: check it answers before anything is sent. Status stores
+	// nothing in the service; the nonce is asked for at the end, as usual.
+	if _, err := c.o.Service.Status(); err != nil {
+		c.fail(err)
+		return
+	}
 	client, err := c.newClient(link.Server, protocol.Pin{Fingerprint: link.Fingerprint}, nil)
 	if err != nil {
 		c.fail(errInvalidLink)
@@ -318,7 +327,7 @@ func (c *Controller) enrollLink(raw string) {
 		c.fail(&protocol.APIError{Code: protocol.ErrCodeUseBrowser})
 		return
 	}
-	c.enroll = &enrollment{link: link, client: client, pin: pin, info: li, replacing: replacing}
+	c.enroll = &enrollment{raw: raw, link: link, client: client, pin: pin, info: li, replacing: replacing}
 	screen := ScreenEnrollPassword
 	if link.Fingerprint == "" {
 		screen = ScreenEnrollFingerprint // an older link: the user compares the fingerprint
@@ -357,7 +366,7 @@ func (c *Controller) enrollPassword(password, otp, deviceName string) {
 	defer cancel()
 	st, err := e.client.EnrollStart(ctx, e.link.Token, password, strings.TrimSpace(otp))
 	if err != nil {
-		c.fail(err)
+		c.enrollFail(err)
 		return
 	}
 	e.stepToken, e.certRequired = st.StepToken, st.CertRequired
@@ -379,10 +388,25 @@ func (c *Controller) enrollMFA(code, deviceName string) {
 	ctx, cancel := c.ctx()
 	defer cancel()
 	if err := e.client.EnrollMFA(ctx, e.stepToken, strings.TrimSpace(code)); err != nil {
-		c.fail(err)
+		c.enrollFail(err)
 		return
 	}
 	c.enrollFinish(ctx, deviceName)
+}
+
+// enrollFail shows the error of an enrollment call to the server. When the
+// server's step has timed out, retrying on this screen cannot work: the app
+// goes back to the setup screen with the link filled in, so the user only
+// presses Continue.
+func (c *Controller) enrollFail(err error) {
+	e := c.enroll
+	if protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep || e == nil {
+		c.fail(err)
+		return
+	}
+	c.o.Log("enrollment step timed out; back to the link", "err", err)
+	c.enroll = nil
+	c.setView(View{Screen: ScreenSetup, Error: viewError(err), Replacing: e.replacing, Link: e.raw})
 }
 
 // enrollFinish makes the device's keys, registers them with the server and
@@ -426,7 +450,7 @@ func (c *Controller) enrollFinish(ctx context.Context, deviceName string) {
 	}
 	enrolled, doc, err := e.client.EnrollFinish(ctx, req)
 	if err != nil {
-		c.fail(err)
+		c.enrollFail(err)
 		return
 	}
 	var cert []byte
