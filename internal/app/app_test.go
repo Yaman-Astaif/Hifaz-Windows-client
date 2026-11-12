@@ -223,7 +223,7 @@ func (h *harness) enroll() {
 	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
 	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
 	v := h.wait(ScreenEnrollPassword)
-	if v.Enroll.Username != "alice" || !v.Enroll.NameEditable {
+	if v.Enroll.Username != "alice" || !v.Enroll.NameEditable || v.Enroll.Kind != protocol.LinkDevice {
 		h.t.Fatalf("enroll view %+v", v.Enroll)
 	}
 	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
@@ -247,6 +247,25 @@ func (h *harness) signIn() View {
 }
 
 // --- tests -------------------------------------------------------------------------
+
+// A renewal link (reinstall on the same computer) tells the page it is a
+// renewal, names the device, and enrolls with the user's own password and code.
+func TestEnrollRenewLink(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", true)
+	link, _ := h.srv.NewLink(protocol.LinkRenew, "alice", "Work laptop")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	v := h.wait(ScreenEnrollPassword)
+	if v.Enroll == nil || v.Enroll.Kind != protocol.LinkRenew || v.Enroll.Device != "Work laptop" ||
+		v.Enroll.Username != "alice" || v.Enroll.NameEditable {
+		t.Fatalf("renew view %+v", v.Enroll)
+	}
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP})
+	v = h.wait(ScreenSignIn)
+	if v.Account == nil || v.Account.Device != "Work laptop" {
+		t.Fatalf("after renewal %+v", v)
+	}
+}
 
 func TestEnrollSignInAndFollow(t *testing.T) {
 	h := newHarness(t)

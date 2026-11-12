@@ -30,6 +30,7 @@ window.I18N = (function () {
       setupSub: "الصق رابط التسجيل الذي أرسله إليك المسؤول.",
       link: "رابط التسجيل",
       replaceWarning: "سيحل الخادم الجديد محل الخادم المسجَّل الآن على هذا الجهاز بعد إتمام التسجيل.",
+      setupReturning: "هل استخدمت حِفاظ من قبل، على هذا الحاسوب أو على حاسوب آخر؟ ما زلت تحتاج إلى رابط: اطلب من المسؤول رابط تجديد لهذا الحاسوب، أو رابط جهاز جديد لحاسوب آخر.",
 
       fpTitle: "تحقّق من هوية الخادم",
       fpSub: "هذا الرابط لا يحمل بصمة الخادم. قارن البصمة التالية بالبصمة التي أعطاك إياها المسؤول.",
@@ -38,7 +39,10 @@ window.I18N = (function () {
       fpDiffers: "البصمة مختلفة، إلغاء",
 
       enrollTitle: "تفعيل هذا الجهاز",
-      enrollSub: "أدخل كلمة المرور التي استلمتها من المسؤول.",
+      enrollSub: "أدخل كلمة المرور الخاصة بك.",
+      renewTitle: "مرحباً بعودتك",
+      renewDevice: "إعادة تفعيل: {device}",
+      renewSub: "أدخل كلمة مرور حِفاظ، ورمز التحقق إن كنت تستخدم المصادقة الثنائية.",
       devName: "اسم هذا الجهاز",
       devNameHint: "بأحرف إنجليزية، مثلاً Work laptop.",
       mfaTitle: "إعداد المصادقة الثنائية",
@@ -165,6 +169,7 @@ window.I18N = (function () {
       setupSub: "Paste the enrollment link your administrator sent you.",
       link: "Enrollment link",
       replaceWarning: "Once enrollment is done, the new server replaces the one this device uses now.",
+      setupReturning: "Used Hifaz before, on this computer or another one? You still need a link: ask your administrator for a renewal link for this computer, or a new device link for another computer.",
 
       fpTitle: "Check the server's identity",
       fpSub: "This link has no server fingerprint. Compare the one below with the fingerprint your administrator gave you.",
@@ -173,7 +178,10 @@ window.I18N = (function () {
       fpDiffers: "It differs, cancel",
 
       enrollTitle: "Activate this device",
-      enrollSub: "Enter the password you received from your administrator.",
+      enrollSub: "Enter your password.",
+      renewTitle: "Welcome back",
+      renewDevice: "Reactivating: {device}",
+      renewSub: "Enter your Hifaz password, and your code if you use two-step verification.",
       devName: "Name of this device",
       devNameHint: "In English letters, for example Work laptop.",
       mfaTitle: "Set up two-step verification",

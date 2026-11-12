@@ -64,6 +64,9 @@
       put("enroll.username", e.username);
       put("enroll.device", e.device);
       put("enroll.name_editable", e.name_editable);
+      put("enroll.renew", e.kind === "renew");
+      put("enroll.new_device", e.kind !== "renew");
+      put("enroll.renew_text", e.kind === "renew" && e.device ? t("renewDevice", { device: "\u2068" + e.device + "\u2069" }) : "");
       put("enroll.fingerprint_display", (e.fingerprint || "").replace(/(.{4})/g, "$1 ").trim());
       put("enroll.mfa_secret_spaced", spaced(e.mfa_secret));
     }
