@@ -38,3 +38,17 @@ Owner: Yaman Astaif. Full description: `README.md`; security model: `docs/archit
 - Changes to `installer/`, `.github/` and `third_party/` ask the owner first.
 - Every action is logged by hooks to `.claude/logs/` (not committed). Do not edit
   `.claude/settings.json` or `.claude/hooks/`; the owner changes those.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on this repo, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created when needed. See `docs/agents/domain.md`.
