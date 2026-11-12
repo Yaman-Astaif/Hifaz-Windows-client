@@ -16,11 +16,14 @@ import (
 //   - owner and group SYSTEM, which the app checks before it trusts the pipe;
 //   - network logons denied;
 //   - SYSTEM and administrators full access;
-//   - interactive users (local and Remote Desktop) read and write data only:
-//     0x12008b is FILE_GENERIC_READ | FILE_WRITE_DATA, without
-//     FILE_CREATE_PIPE_INSTANCE, so a user cannot add a server end of their
-//     own to this pipe.
-const pipeSDDL = "O:SYG:SYD:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12008b;;;IU)"
+//   - interactive users (local and Remote Desktop) userAccess only.
+const pipeSDDL = "O:SYG:SYD:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;" + userAccess + ";;;IU)"
+
+// userAccess is what a normal user may do with the pipe: read, and write
+// data. 0x12008b is FILE_GENERIC_READ | FILE_WRITE_DATA, deliberately
+// without FILE_CREATE_PIPE_INSTANCE, so a user cannot add a server end of
+// their own to this pipe. dial must not ask for more than this.
+const userAccess = "0x12008b"
 
 const pipeBuffer = 64 << 10
 
@@ -172,7 +175,11 @@ func dial(name string, timeout time.Duration, owner *windows.SID) (*Conn, error)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		h, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil,
+		// Stay within userAccess: GENERIC_WRITE would also ask for
+		// FILE_APPEND_DATA (FILE_CREATE_PIPE_INSTANCE), FILE_WRITE_EA and
+		// FILE_WRITE_ATTRIBUTES, which normal users are not granted. GENERIC_READ brings
+		// READ_CONTROL (checkServerOwner) and SYNCHRONIZE (overlapped I/O).
+		h, err := windows.CreateFile(path, windows.GENERIC_READ|windows.FILE_WRITE_DATA, 0, nil,
 			windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED|windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 		if err == nil {
 			if err := checkServerOwner(h, owner); err != nil {
