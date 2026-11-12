@@ -5,9 +5,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -168,6 +171,41 @@ type harness struct {
 	views  chan View
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	dropMu sync.Mutex
+	// drop, when set, is asked about every request after the server has
+	// answered it: true loses the answer, as a broken connection would.
+	drop func(*http.Request) bool
+}
+
+func (h *harness) setDrop(f func(*http.Request) bool) {
+	h.dropMu.Lock()
+	defer h.dropMu.Unlock()
+	h.drop = f
+}
+
+// httpClient is the server's client, with answers lost where drop says.
+func (h *harness) httpClient(cert *tls.Certificate) *http.Client {
+	hc := h.srv.HTTPClientWith(cert)
+	hc.Transport = dropTransport{base: hc.Transport, h: h}
+	return hc
+}
+
+type dropTransport struct {
+	base http.RoundTripper
+	h    *harness
+}
+
+func (d dropTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	res, err := d.base.RoundTrip(r)
+	d.h.dropMu.Lock()
+	drop := d.h.drop
+	d.h.dropMu.Unlock()
+	if err == nil && drop != nil && drop(r) {
+		res.Body.Close()
+		return nil, errors.New("connection reset (test)")
+	}
+	return res, err
 }
 
 func newHarness(t *testing.T) *harness {
@@ -185,7 +223,7 @@ func newHarness(t *testing.T) *harness {
 		Pins: daemon.NewFileStore(filepath.Join(t.TempDir(), "servers.json")), Policy: func() policy.Policy { return h.pol }})
 	h.svc = &engineService{e: engine, caller: daemon.Caller{SID: "S-1-5-21-1", Session: 1}}
 	h.ctrl = New(Options{Store: store, Service: h.svc,
-		HTTPClient: h.srv.HTTPClientWith, OSName: "Windows 11 Pro", OnView: func(v View) { h.views <- v },
+		HTTPClient: h.httpClient, OSName: "Windows 11 Pro", OnView: func(v View) { h.views <- v },
 		Log: func(msg string, args ...any) { t.Log(append([]any{msg}, args...)...) }})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
@@ -358,12 +396,15 @@ func TestFullTunnelRefusedAndSignedOut(t *testing.T) {
 	h.ctrl.Do(Action{Name: "signin", Password: "pw"})
 	h.wait(ScreenSignInOTP)
 	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
-	if e := h.waitError(); e.Code != ipc.ErrFullTunnel {
-		t.Fatalf("error %q", e.Code)
+	// The server session is ended and the step is used up: back to sign-in.
+	if v := h.waitErrorView(); v.Screen != ScreenSignIn || v.Error.Code != ipc.ErrFullTunnel {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
 	}
 	if up, _, _, _ := h.tun.state(); up || h.srv.ActiveSessions() != 0 {
 		t.Fatal("refused tunnel left a server session or tunnel")
 	}
+	h.srv.SetAllowedIPs("10.98.0.0/16")
+	h.signIn()
 }
 
 func TestWrongFingerprintRefused(t *testing.T) {
@@ -672,4 +713,88 @@ func TestEnrollStepExpiredWhileReplacing(t *testing.T) {
 		t.Fatalf("after the step timed out: screen %s, error %q, link %q, replacing %v",
 			v.Screen, v.Error.Code, v.Link, v.Replacing)
 	}
+}
+
+// --- the sign-in code step ---------------------------------------------------------
+
+// toCodeScreen signs in with the password and waits for the code screen.
+func (h *harness) toCodeScreen() {
+	h.t.Helper()
+	h.ctrl.Do(Action{Name: "signin", Password: "pw"})
+	h.wait(ScreenSignInOTP)
+}
+
+// A wrong code keeps the step: the app stays on the code screen, says the
+// code does not match, and the right code then connects.
+func TestSignInWrongCodeThenRight(t *testing.T) {
+	h := newHarness(t)
+	h.enroll()
+	h.toCodeScreen()
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: "000000"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSignInOTP || v.Error.Code != protocol.ErrCodeInvalidCode {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
+	h.wait(ScreenConnected)
+}
+
+// The server ends the step at the third wrong code: the app goes back to
+// sign-in and sends no fourth code; signing in again works.
+func TestSignInThreeWrongCodesEndStep(t *testing.T) {
+	h := newHarness(t)
+	h.enroll()
+	h.toCodeScreen()
+	for i := 1; i <= 2; i++ {
+		h.ctrl.Do(Action{Name: "signin_otp", OTP: "000000"})
+		if v := h.waitErrorView(); v.Screen != ScreenSignInOTP || v.Error.Code != protocol.ErrCodeInvalidCode {
+			t.Fatalf("wrong code %d: view %s, error %q", i, v.Screen, v.Error.Code)
+		}
+	}
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: "000000"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSignIn || v.Error.Code != protocol.ErrCodeInvalidCredentials {
+		t.Fatalf("third wrong code: view %s, error %q", v.Screen, v.Error.Code)
+	}
+	n := h.srv.Requests()
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
+	h.wait(ScreenSignIn)
+	if got := h.srv.Requests(); got != n {
+		t.Fatalf("%d requests sent after the step ended", got-n)
+	}
+	h.signIn()
+}
+
+// A step that timed out on the server: back to sign-in with its own text;
+// signing in again works.
+func TestSignInCodeStepExpired(t *testing.T) {
+	h := newHarness(t)
+	h.enroll()
+	h.toCodeScreen()
+	h.srv.ExpireSteps()
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSignIn || v.Error.Code != ErrSignInStepExpired {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+	h.signIn()
+}
+
+// The answer to a code is lost on the way back: the app stays on the code
+// screen with the step, and a retry (with a new nonce) connects.
+func TestSignInCodeAnswerLost(t *testing.T) {
+	h := newHarness(t)
+	h.enroll()
+	h.toCodeScreen()
+	var dropped atomic.Bool
+	h.setDrop(func(r *http.Request) bool {
+		return strings.HasSuffix(r.URL.Path, "/login/otp") && dropped.CompareAndSwap(false, true)
+	})
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: "000000"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSignInOTP || v.Error.Code != ErrNetwork {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
+	h.wait(ScreenConnected)
 }

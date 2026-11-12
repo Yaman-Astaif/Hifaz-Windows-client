@@ -106,8 +106,9 @@ const (
 	ErrNoAccount          = "no_account"
 	ErrKeystore           = "keystore"
 	ErrInternal           = "internal"
-	ErrEnrollInterrupted  = "enroll_interrupted" // two-step setup was saved, then the enrollment failed
-	ErrCodeRequired       = "code_required"      // the verification code was left empty
+	ErrEnrollInterrupted  = "enroll_interrupted"  // two-step setup was saved, then the enrollment failed
+	ErrCodeRequired       = "code_required"       // the verification code was left empty
+	ErrSignInStepExpired  = "signin_step_expired" // the sign-in code step ended: sign in again
 )
 
 // errServiceUnavailable wraps failures to reach the local service.

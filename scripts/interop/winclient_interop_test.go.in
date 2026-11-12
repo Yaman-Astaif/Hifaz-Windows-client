@@ -445,6 +445,86 @@ func TestWinClientEnrollRestart(t *testing.T) {
 	}
 }
 
+// wrongCode is a six-digit code that matches no window near the server's
+// clock.
+func (e *winEnv) wrongCode(d *winDevice) string {
+	now := auth.TOTPCounter(e.clk.Now())
+	for _, c := range []string{"000000", "111111", "222222", "333333"} {
+		ok := true
+		for n := now - 3; n <= now+3; n++ {
+			ok = ok && auth.TOTPCode(d.secret, n) != c
+		}
+		if ok {
+			return c
+		}
+	}
+	panic("no wrong code")
+}
+
+// TestWinClientSignInCodeStep checks how the server keeps the sign-in code
+// step (protocol section 8), which the app follows (issue #12): a wrong code
+// is invalid_credentials and keeps the step until the third; a used-up or
+// expired step is invalid_step. A new user per case keeps the wrong codes
+// under the lockout.
+func TestWinClientSignInCodeStep(t *testing.T) {
+	e := newWinEnv(t)
+	ctx := context.Background()
+	start := func(user string) (*winDevice, string) {
+		t.Helper()
+		d, pw := e.enroll(t, user, "staff", nil)
+		// Sign on the server's clock, so moving it does not cause clock_skew.
+		c, err := protocol.NewClient(d.client.Server(), d.client.Pin(),
+			protocol.Options{HTTPClient: e.httpClient(nil, nil), App: "windows/0.1.0", Now: e.clk.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.client = c
+		res, err := c.Login(ctx, protocol.Auth{Signer: d.signer, Nonce: e.svcNonce(t)},
+			protocol.LoginRequest{Username: user, Password: pw})
+		if err != nil || !res.OTPRequired {
+			t.Fatalf("login: %+v %v", res, err)
+		}
+		return d, res.StepToken
+	}
+	otp := func(d *winDevice, step, code string) (*protocol.LoginResult, error) {
+		return d.client.LoginOTP(ctx, protocol.Auth{Signer: d.signer, Nonce: e.svcNonce(t)}, step, code)
+	}
+
+	t.Run("two wrong codes, then the right one", func(t *testing.T) {
+		d, step := start("omar")
+		for i := 1; i <= 2; i++ {
+			if _, err := otp(d, step, e.wrongCode(d)); protocol.ErrorCode(err) != protocol.ErrCodeInvalidCredentials {
+				t.Fatalf("wrong code %d: %v", i, err)
+			}
+		}
+		res, err := otp(d, step, e.code(d))
+		if err != nil || res.Session == nil || res.Session.SessionToken == "" {
+			t.Fatalf("right code after two wrong ones: %+v %v", res, err)
+		}
+	})
+
+	t.Run("the third wrong code ends the step", func(t *testing.T) {
+		d, step := start("lina")
+		for i := 1; i <= 3; i++ {
+			if _, err := otp(d, step, e.wrongCode(d)); protocol.ErrorCode(err) != protocol.ErrCodeInvalidCredentials {
+				t.Fatalf("wrong code %d: %v", i, err)
+			}
+		}
+		if _, err := otp(d, step, e.code(d)); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+			t.Fatalf("right code after three wrong ones: %v", err)
+		}
+	})
+
+	t.Run("the step expires after five minutes", func(t *testing.T) {
+		d, step := start("sami")
+		e.clk.Advance(5*time.Minute + time.Second)
+		d.used = false // the clock already moved past the last code
+		if _, err := otp(d, step, e.code(d)); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+			t.Fatalf("expired step: %v", err)
+		}
+	})
+}
+
 func b64std(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 func decodeB64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
