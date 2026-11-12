@@ -67,6 +67,7 @@
       put("enroll.renew", e.kind === "renew");
       put("enroll.new_device", e.kind !== "renew");
       put("enroll.renew_text", e.kind === "renew" && e.device ? t("renewDevice", { device: "\u2068" + e.device + "\u2069" }) : "");
+      put("enroll.device_row", e.kind !== "renew" && !!e.device); // a renewal names the device in its subtitle
       put("enroll.fingerprint_display", (e.fingerprint || "").replace(/(.{4})/g, "$1 ").trim());
       put("enroll.mfa_secret_spaced", spaced(e.mfa_secret));
     }
