@@ -183,8 +183,48 @@ func TestPipeRoundTripAndIdentity(t *testing.T) {
 func TestDialChecksOwner(t *testing.T) {
 	name, _, _ := testPipe(t)
 	system, _ := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if _, err := dial(name, time.Second, system); !errors.Is(err, ErrNotService) {
+	_, err := dial(name, time.Second, system)
+	if !errors.Is(err, ErrNotService) {
 		t.Fatalf("pipe not owned by SYSTEM accepted: %v", err)
+	}
+	if !errors.Is(err, ErrServiceUntrusted) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("owner check: %v, want untrusted and unavailable", err)
+	}
+}
+
+// No pipe: the service is not running, and the Windows error is kept.
+func TestDialMissingPipe(t *testing.T) {
+	name := fmt.Sprintf(`\\.\pipe\Hifaz-test-missing-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	start := time.Now()
+	_, err := dial(name, 300*time.Millisecond, currentUser(t))
+	if !errors.Is(err, ErrServiceNotRunning) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing pipe: %v, want not running", err)
+	}
+	if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		t.Fatalf("missing pipe: %v, Windows error lost", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("dial took %v", d)
+	}
+}
+
+// A pipe that gives the current user nothing refuses the app. Only SYSTEM
+// is granted access; there is no BA entry, so an elevated runner is refused
+// too.
+func TestDialAccessDenied(t *testing.T) {
+	me := currentUser(t)
+	name := fmt.Sprintf(`\\.\pipe\Hifaz-test-denied-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	l, err := listen(name, "O:"+me.String()+"D:P(A;;GA;;;SY)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	_, err = dial(name, time.Second, me)
+	if !errors.Is(err, ErrServiceRefused) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("denied pipe: %v, want refused", err)
+	}
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("denied pipe: %v, Windows error lost", err)
 	}
 }
 

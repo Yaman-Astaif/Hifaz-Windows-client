@@ -161,7 +161,7 @@ func Read(r io.Reader, v any) error {
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
 	if n == 0 || n > MaxMessage {
-		return errors.New("ipc: invalid message length")
+		return errBadFrame
 	}
 	data := make([]byte, n)
 	defer clear(data)

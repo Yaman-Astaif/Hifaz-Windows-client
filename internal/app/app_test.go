@@ -72,6 +72,9 @@ type engineService struct {
 	e      *daemon.Engine
 	caller daemon.Caller
 	down   atomic.Bool
+	// downErr is what every call fails with while down is set; nil means
+	// the pipe's "Access is denied" without a known cause.
+	downErr error
 	// beforeNonce, when set, runs at the start of Nonce, so a test can act
 	// at the moment the app is about to finish an enrollment.
 	beforeNonce func()
@@ -84,6 +87,9 @@ const (
 
 func (s *engineService) do(conn uint64, req ipc.Request) (*ipc.Response, error) {
 	if s.down.Load() {
+		if s.downErr != nil {
+			return nil, s.downErr
+		}
 		return nil, fmt.Errorf("%w: Access is denied", ipc.ErrUnavailable)
 	}
 	r := s.e.Handle(context.Background(), conn, s.caller, &req)
@@ -363,6 +369,26 @@ func TestEnrollSignInAndFollow(t *testing.T) {
 	}
 }
 
+// The service fails while the session is followed: the window says why.
+func TestFollowServiceRefused(t *testing.T) {
+	h := newHarness(t)
+	h.svc.downErr = fmt.Errorf("%w: %w", ipc.ErrServiceRefused, errors.New("Access is denied."))
+	var armed atomic.Bool
+	h.svc.beforeNonce = func() { // the service goes away at the next nonce
+		if armed.Load() {
+			h.svc.down.Store(true)
+		}
+	}
+	h.enroll()
+	h.signIn()
+	armed.Store(true)
+	h.srv.SetAllowedIPs("10.98.0.0/16", "10.20.0.0/16") // the poll answers, the next one needs a nonce
+	v := h.waitErrorView()
+	if v.Screen != ScreenSignIn || v.Error.Code != ErrServiceRefused {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+}
+
 func TestDisconnectSignsOut(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -561,22 +587,37 @@ func TestServerTooOld(t *testing.T) {
 
 // A service that cannot be reached is found when the link is pasted, before
 // the server uses up any step; once it answers, the same link works.
+// The error shown says why the service could not be reached.
 func TestEnrollServiceDownAtLink(t *testing.T) {
-	h := newHarness(t)
-	h.srv.AddUser("alice", "pw", false)
-	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
-	h.svc.down.Store(true)
-	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
-	v := h.waitErrorView()
-	if v.Screen != ScreenSetup || v.Error.Code != ErrServiceUnavailable {
-		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	for _, tc := range []struct {
+		name    string
+		downErr error
+		code    string
+	}{
+		{"unknown cause", nil, ErrServiceUnavailable},
+		{"not running", fmt.Errorf("%w: %w", ipc.ErrServiceNotRunning, errors.New("The system cannot find the file specified.")), ErrServiceUnavailable},
+		{"refused", fmt.Errorf("%w: %w", ipc.ErrServiceRefused, errors.New("Access is denied.")), ErrServiceRefused},
+		{"untrusted", fmt.Errorf("%w: owner S-1-5-21-9", ipc.ErrServiceUntrusted), ErrServiceUntrusted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.srv.AddUser("alice", "pw", false)
+			link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+			h.svc.downErr = tc.downErr
+			h.svc.down.Store(true)
+			h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+			v := h.waitErrorView()
+			if v.Screen != ScreenSetup || v.Error.Code != tc.code {
+				t.Fatalf("view %s, error %q, want %q", v.Screen, v.Error.Code, tc.code)
+			}
+			if n := h.srv.Requests(); n != 0 {
+				t.Fatalf("%d requests sent to the server with the service down", n)
+			}
+			h.svc.down.Store(false)
+			h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+			h.wait(ScreenEnrollPassword)
+		})
 	}
-	if n := h.srv.Requests(); n != 0 {
-		t.Fatalf("%d requests sent to the server with the service down", n)
-	}
-	h.svc.down.Store(false)
-	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
-	h.wait(ScreenEnrollPassword)
 }
 
 // The service fails only at the end: the user stays on the step and sees
