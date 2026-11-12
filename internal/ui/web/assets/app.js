@@ -88,6 +88,7 @@
       put("update.download_url", u.download_url);
     }
     put("replacing", view.replacing);
+    put("first_setup", !view.replacing); // the returning-user hint is for a computer with no enrollment
     put("app.version_text", app.version ? t("version", { v: app.version }) : "");
     put("app.developer", app.developer);
     put("app.requires_text", app.min_server ? t("requiresServer", { v: app.min_server }) : "");
