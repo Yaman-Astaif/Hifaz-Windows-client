@@ -6,8 +6,10 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,9 +63,12 @@ func (f *fakeTunnel) state() (bool, *protocol.TunnelConfig, protocol.Key, int) {
 
 // engineService is the Service interface over the real engine, the way the
 // pipe client uses it: one control connection, one for everything else.
+// While down is set, every call fails the way the pipe client does when the
+// service cannot be reached.
 type engineService struct {
 	e      *daemon.Engine
 	caller daemon.Caller
+	down   atomic.Bool
 }
 
 const (
@@ -72,6 +77,9 @@ const (
 )
 
 func (s *engineService) do(conn uint64, req ipc.Request) (*ipc.Response, error) {
+	if s.down.Load() {
+		return nil, fmt.Errorf("%w: Access is denied", ipc.ErrUnavailable)
+	}
 	r := s.e.Handle(context.Background(), conn, s.caller, &req)
 	if r.Error != nil {
 		return nil, r.Error
@@ -147,6 +155,7 @@ func (p *testProtector) Unprotect(b []byte) ([]byte, error) {
 type harness struct {
 	t      *testing.T
 	srv    *fakeserver.Server
+	svc    *engineService
 	tun    *fakeTunnel
 	pol    policy.Policy
 	ctrl   *Controller
@@ -168,7 +177,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	engine := daemon.New(daemon.Options{Tunnel: h.tun,
 		Pins: daemon.NewFileStore(filepath.Join(t.TempDir(), "servers.json")), Policy: func() policy.Policy { return h.pol }})
-	h.ctrl = New(Options{Store: store, Service: &engineService{e: engine, caller: daemon.Caller{SID: "S-1-5-21-1", Session: 1}},
+	h.svc = &engineService{e: engine, caller: daemon.Caller{SID: "S-1-5-21-1", Session: 1}}
+	h.ctrl = New(Options{Store: store, Service: h.svc,
 		HTTPClient: h.srv.HTTPClientWith, OSName: "Windows 11 Pro", OnView: func(v View) { h.views <- v },
 		Log: func(msg string, args ...any) { t.Log(append([]any{msg}, args...)...) }})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,12 +213,18 @@ func (h *harness) wait(screen Screen) View {
 // waitError returns the first view with an error.
 func (h *harness) waitError() *ViewError {
 	h.t.Helper()
+	return h.waitErrorView().Error
+}
+
+// waitErrorView returns the first view with an error, whole.
+func (h *harness) waitErrorView() View {
+	h.t.Helper()
 	deadline := time.After(10 * time.Second)
 	for {
 		select {
 		case v := <-h.views:
 			if v.Error != nil && !v.Busy {
-				return v.Error
+				return v
 			}
 		case <-deadline:
 			h.t.Fatal("no error view")
@@ -493,5 +509,85 @@ func TestServerTooOld(t *testing.T) {
 	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
 	if e := h.waitError(); e.Code != protocol.ErrCodeServerTooOld {
 		t.Fatalf("error %q", e.Code)
+	}
+}
+
+// A service that cannot be reached is found when the link is pasted, before
+// the server uses up any step; once it answers, the same link works.
+func TestEnrollServiceDownAtLink(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.svc.down.Store(true)
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSetup || v.Error.Code != ErrServiceUnavailable {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+	if n := h.srv.Requests(); n != 0 {
+		t.Fatalf("%d requests sent to the server with the service down", n)
+	}
+	h.svc.down.Store(false)
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+}
+
+// The service fails only at the end: the user stays on the step and sees
+// the service error. When the server's step has timed out by the retry, the
+// app goes back to the setup screen with the link filled in.
+func TestEnrollStepExpiredReturnsToSetup(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.wait(ScreenEnrollMFA)
+
+	h.svc.down.Store(true)
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenEnrollMFA || v.Error.Code != ErrServiceUnavailable {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+
+	h.svc.down.Store(false)
+	h.srv.ExpireSteps()
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
+	v = h.waitErrorView()
+	if v.Screen != ScreenSetup || v.Error.Code != protocol.ErrCodeInvalidStep || v.Link != link || v.Replacing {
+		t.Fatalf("after the step timed out: screen %s, error %q, link %q, replacing %v",
+			v.Screen, v.Error.Code, v.Link, v.Replacing)
+	}
+
+	// Continue with the kept link; the user set up MFA in the first attempt.
+	h.ctrl.Do(Action{Name: "enroll_link", Link: v.Link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP, DeviceName: "Laptop"})
+	if v := h.wait(ScreenSignIn); v.Account == nil || v.Account.Device != "Laptop" {
+		t.Fatalf("after enrollment %+v", v)
+	}
+}
+
+// Adding a server: a timed-out step goes back to setup still replacing.
+func TestEnrollStepExpiredWhileReplacing(t *testing.T) {
+	h := newHarness(t)
+	h.enroll()
+	h.ctrl.Do(Action{Name: "add_server"})
+	if v := h.wait(ScreenSetup); !v.Replacing {
+		t.Fatal("add_server not replacing")
+	}
+	h.srv.AddUser("bob", "pw2", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "bob", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw2"})
+	h.wait(ScreenEnrollMFA)
+	h.srv.ExpireSteps()
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenSetup || v.Error.Code != protocol.ErrCodeInvalidStep || v.Link != link || !v.Replacing {
+		t.Fatalf("after the step timed out: screen %s, error %q, link %q, replacing %v",
+			v.Screen, v.Error.Code, v.Link, v.Replacing)
 	}
 }

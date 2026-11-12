@@ -149,7 +149,12 @@
     if (view.screen !== lastScreen) {
       clearSecrets();
       lastScreen = view.screen;
-      const first = document.querySelector('section[data-screen="' + view.screen + '"] input');
+      // After a timed-out enrollment step the app sends the link back: the
+      // user only presses Continue.
+      const prefilled = view.screen === "setup" && !!view.link;
+      if (prefilled) $("link").value = view.link;
+      const first = prefilled ? document.querySelector('#f-setup button[type="submit"]')
+        : document.querySelector('section[data-screen="' + view.screen + '"] input');
       if (first && page === "") first.focus();
     }
   }
