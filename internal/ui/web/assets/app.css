@@ -3,6 +3,15 @@
 /* The window is the page: no scroll bar unless the content needs one. */
 body { min-height: 100vh; }
 main { max-width: 440px; }
+/* Tighter than the web pages, so the longest screens fit the window
+   (460x760) without scrolling. */
+main { padding: 20px 16px 16px; }
+h1 { margin: 0 0 2px; }
+.sub { margin: 0 0 14px; }
+.card { padding: 16px 18px; }
+label { margin-bottom: 10px; }
+input { margin-top: 4px; padding: 9px 12px; }
+.card dl { margin-bottom: 12px; }
 h2 { font: 700 16px/1.4 "WG Heading", "WG Body", sans-serif; color: var(--heading); margin: 22px 0 10px; }
 .center { text-align: center; }
 .start { text-align: start; }
@@ -13,7 +22,7 @@ h2 { font: 700 16px/1.4 "WG Heading", "WG Body", sans-serif; color: var(--headin
 .logo-slot.large { width: 72px; height: 72px; margin: 0 auto 8px; display: block; }
 
 /* Status messages above the screens. */
-#error, #notice { margin-bottom: 16px; }
+#error, #notice { margin-bottom: 12px; }
 
 /* Fingerprint to compare: large, grouped, left-to-right. */
 .fp { font-size: 18px; letter-spacing: .08em; overflow-wrap: anywhere; }

@@ -8,7 +8,7 @@
 | `scripts/interop-hifaz.sh <Hifaz checkout>` | The app's protocol client and service engine against the **real** Hifaz server (its own test harness, in memory): enrollment with MFA, the service accepting the server's signed documents and configuration, `version` on status calls, `renew_not_due`, renewal adopted at the next sign-in with `wg_public_key`, `app_too_old`, sign-out, and a certificate group. Copies what it needs into the checkout and removes it after. |
 | CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance, dialing with only the access mask normal users are granted), DPAPI, and a real WireGuardNT adapter: up, routes, NRPT rule, reconfigure, down, nothing left. Builds both MSIs as a release does. |
 | `scripts/test-install.ps1` (CI) | Installs the MSI, checks files, service, pipe, logs, start-up entry and recovery, removes it and checks nothing is left. |
-| `scripts/test-ui.ps1` (CI) | Installs the MSI and starts the app as a user would: window style (no maximize, fixed size, fits the screen), icons, version information; then, through a local debugging port (`HIFAZ_WEBVIEW_DEBUG_PORT`, set only by the test), the page: served from the app, first screen, Arabic/RTL, fonts, English, dark theme, an error, Settings, About. Screenshots of the desktop and every screen go to the `ci/ui-screenshots` branch. |
+| `scripts/test-ui.ps1` (CI) | Installs the MSI and starts the app as a user would: window style (resizable and maximizable, fits the screen, never smaller than its minimum size), icons, version information; then, through a local debugging port (`HIFAZ_WEBVIEW_DEBUG_PORT`, set only by the test), the page: served from the app, first screen, Arabic/RTL, fonts, English, dark theme, an error, Settings, About, and the enrollment password screen (with an error and the device name) fitting 460x760 without scrolling in English and Arabic. Screenshots of the desktop and every screen go to the `ci/ui-screenshots` branch. |
 
 ## Against a Hifaz server (test environment)
 
@@ -26,6 +26,7 @@ Install and basics
 - [ ] Install as admin; then sign in to Windows as a **normal user** for everything below.
 - [ ] The service runs (`sc query Hifaz`); the app starts from the Start menu and at sign-in (tray only).
 - [ ] Window: Arabic by default, right-to-left; English switch; light/dark; About shows Yaman Astaif and the version.
+- [ ] Window: resize and maximize work and it never gets smaller than its minimum size; closed while maximized and reopened from the tray, it is still maximized.
 
 Enrollment
 - [ ] Link with fingerprint: enrolls; MFA setup with the QR code; device name when the admin left it empty.

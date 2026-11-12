@@ -38,8 +38,6 @@ const (
 	menuConnect    = 2
 	menuDisconnect = 3
 	menuQuit       = 4
-	baseWidth      = 460 // page size at 96 DPI (client area)
-	baseHeight     = 760
 )
 
 // Options configure Run.
@@ -149,7 +147,7 @@ func (h *windowHost) createWindow() error {
 	tc, _, _ := pRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(utf16("TaskbarCreated"))))
 	h.taskbarCreated = uint32(tc)
 	w, _, err := pCreateWindowExW.Call(0, uintptr(unsafe.Pointer(utf16(ClassName))),
-		uintptr(unsafe.Pointer(utf16(version.Name))), wsFixedWindow,
+		uintptr(unsafe.Pointer(utf16(version.Name))), wsWindow,
 		cwUseDefault, cwUseDefault, baseWidth, baseHeight, 0, 0, uintptr(instance), 0)
 	if w == 0 {
 		return err
@@ -168,24 +166,32 @@ func (h *windowHost) dpi() int {
 	return int(d)
 }
 
+// frame is what the title bar and borders add to the client area at dpi.
+func frame(dpi int) (w, h int32) {
+	var r rect
+	pAdjustWindowRectExForDpi.Call(uintptr(unsafe.Pointer(&r)), wsWindow, 0, 0, uintptr(dpi))
+	return r.Right - r.Left, r.Bottom - r.Top
+}
+
+// workArea is the work area of the window's monitor (without the taskbar);
+// empty if it cannot be found.
+func workArea(hwnd windows.HWND) rect {
+	mon, _, _ := pMonitorFromWindow.Call(uintptr(hwnd), 2 /* MONITOR_DEFAULTTONEAREST */)
+	mi := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
+	if r, _, _ := pGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
+		return rect{}
+	}
+	return mi.Work
+}
+
 // placeWindow sizes the window for the monitor's DPI, no larger than the
 // monitor's work area, and centres it there.
 func (h *windowHost) placeWindow() {
 	dpi := h.dpi()
-	client := rect{Right: int32(baseWidth * dpi / 96), Bottom: int32(baseHeight * dpi / 96)}
-	pAdjustWindowRectExForDpi.Call(uintptr(unsafe.Pointer(&client)), wsFixedWindow, 0, 0, uintptr(dpi))
-	w, ht := client.Right-client.Left, client.Bottom-client.Top
-	x, y := int32(0), int32(0)
-	mon, _, _ := pMonitorFromWindow.Call(uintptr(h.hwnd), 2 /* MONITOR_DEFAULTTONEAREST */)
-	mi := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
-	if r, _, _ := pGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r != 0 {
-		work := mi.Work
-		ht = min(ht, work.Bottom-work.Top)
-		w = min(w, work.Right-work.Left)
-		x = work.Left + (work.Right-work.Left-w)/2
-		y = work.Top + (work.Bottom-work.Top-ht)/2
-	}
-	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(x), uintptr(y), uintptr(w), uintptr(ht), swpNoZOrder|swpNoActivate)
+	fw, fh := frame(dpi)
+	r := placement(dpi, fw, fh, workArea(h.hwnd))
+	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(r.Left), uintptr(r.Top),
+		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 }
 
 // makeIcons draws the icons for the window's current scaling. The old ones
@@ -213,9 +219,15 @@ func (h *windowHost) makeIcons() {
 	}
 }
 
+// show brings the window back as it was: a minimized one is restored (to
+// maximized, if it was), a hidden one is shown in its last state, so a
+// maximized window stays maximized.
 func (h *windowHost) show() {
-	pShowWindow.Call(uintptr(h.hwnd), swRestore)
-	pShowWindow.Call(uintptr(h.hwnd), swShow)
+	if r, _, _ := pIsIconic.Call(uintptr(h.hwnd)); r != 0 {
+		pShowWindow.Call(uintptr(h.hwnd), swRestore)
+	} else {
+		pShowWindow.Call(uintptr(h.hwnd), swShow)
+	}
 	pSetForegroundWindow.Call(uintptr(h.hwnd))
 	h.fitWebView(true)
 	if h.webview != nil {
@@ -280,6 +292,13 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		return 0
 	case wmSize:
 		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
+		return 0
+	case wmGetMinMaxInfo:
+		// The user can resize the window, but not below the minimum page size.
+		dpi := h.dpi()
+		fw, fh := frame(dpi)
+		mmi := (*minMaxInfo)(osPointer(l))
+		mmi.MinTrackSize.X, mmi.MinTrackSize.Y = minTrackSize(dpi, fw, fh, workArea(hwnd))
 		return 0
 	case wmDpiChanged:
 		// Take the size Windows suggests for the new monitor.
