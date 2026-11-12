@@ -2,7 +2,6 @@
 
 - **Date:** YYYY-MM-DD
 - **Branch:** agent/N-short-name
-- **Pull request:** #PR (filled at the end)
 - **Action log:** `.claude/logs/YYYY-MM-DD.log` on the owner's computer (every step, with times)
 
 ## What was asked

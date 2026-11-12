@@ -18,6 +18,11 @@ Keep a task list with one item per step so progress is visible.
   say why.
 
 ## 2. Branch
+- `git status --short`: if there are uncommitted changes, stop and tell the
+  owner; never stash or discard them.
+- If the current branch is not `main`, say so in the reply: switching away
+  takes that branch's files (for example an unmerged pull request) out of the
+  working tree. Nothing is lost; they stay on their branch.
 - `git fetch origin` then `git switch -c agent/$ARGUMENTS-<short-slug> origin/main`
   (if the branch exists, switch to it and continue).
 
@@ -50,8 +55,11 @@ Keep a task list with one item per step so progress is visible.
 ## 8. Finish
 - Complete the work report and commit it on the branch.
 - `git push -u origin <branch>`
-- `gh pr create` with title `<issue title> (#$ARGUMENTS)` and a body made of the
-  work report, ending with `Closes #$ARGUMENTS`.
+- `gh pr create` once, with title `<issue title> (#$ARGUMENTS)` and a body made
+  of the finished work report, ending with `Closes #$ARGUMENTS`. Write the body
+  to a file first (`--body-file`). Do not edit the pull request afterwards
+  (`gh pr edit` fails on this repository, and PATCH through `gh api` is
+  blocked); to add something, use `gh pr comment`.
 - Comment on the issue with the PR link.
 - Reply to the owner in a few lines: the PR link, `make check` result, review
   outcome, anything left open.
