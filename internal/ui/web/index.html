@@ -51,6 +51,7 @@
       <button class="btn" type="submit" data-t="continue"></button>
       <button class="btn alt" type="button" data-act="enroll_cancel" data-show="replacing" data-t="cancel" hidden></button>
     </form>
+    <p class="hint" data-t="setupReturning" data-show="first_setup"></p>
   </section>
 
   <!-- Compare the fingerprint (links made before Hifaz 0.8.0) -->
@@ -70,13 +71,16 @@
 
   <!-- Enrollment password (and code, if MFA is already set up) -->
   <section data-screen="enroll_password">
-    <h1 data-t="enrollTitle"></h1>
-    <p class="sub" data-t="enrollSub"></p>
+    <h1 data-t="enrollTitle" data-show="enroll.new_device"></h1>
+    <h1 data-t="renewTitle" data-show="enroll.renew" hidden></h1>
+    <p class="sub" data-field="enroll.renew_text" data-show="enroll.renew_text" hidden></p>
+    <p class="sub" data-t="renewSub" data-show="enroll.renew" hidden></p>
+    <p class="sub" data-t="enrollSub" data-show="enroll.new_device"></p>
     <form id="f-enroll" class="card" novalidate>
       <dl>
         <dt data-t="server"></dt><dd class="mono" data-field="enroll.server"></dd>
         <dt data-t="user"></dt><dd class="mono" data-field="enroll.username"></dd>
-        <dt data-t="device" data-show="enroll.device"></dt><dd data-field="enroll.device" data-show="enroll.device"></dd>
+        <dt data-t="device" data-show="enroll.device_row"></dt><dd data-field="enroll.device" data-show="enroll.device_row"></dd>
       </dl>
       <label><span data-t="password"></span>
         <input id="e-password" class="ltr" type="password" autocomplete="off" required>

@@ -86,6 +86,26 @@ with their SHA-256 files, and fills the title and notes from
 [CHANGELOG.md](CHANGELOG.md). Release builds need the WireGuardNT hash
 pinned (`third_party/wireguard-nt/SHA256`).
 
+## Reinstalling or using another computer
+
+Every computer, and every Windows account on it, is its own device on the
+server, and the administrator approves each one with a link.
+
+- **Reinstalled Hifaz, or Windows, on the same computer:** ask your
+  administrator for a *renewal link* for this computer's device. The app shows
+  "Welcome back" and the device name. You sign in with your own password, and
+  your code if you use two-step verification. The server replaces that
+  device's keys.
+- **Another computer, or another Windows account:** ask for a new *device link*.
+
+Your password and two-step code alone are not enough. The device keys are
+created on the computer, stay protected for your Windows account, and are never
+exported or copied, so a new installation has no keys until the administrator
+approves it. Uninstalling deletes them; upgrading or repairing keeps them.
+
+Administrators: for a reinstall, prefer a renewal link for the existing device
+over a new device link, so that old device records do not pile up.
+
 ## Administrators
 
 Machine policy, optional, under `HKLM\SOFTWARE\Policies\Hifaz` (by hand,

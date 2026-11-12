@@ -64,6 +64,10 @@
       put("enroll.username", e.username);
       put("enroll.device", e.device);
       put("enroll.name_editable", e.name_editable);
+      put("enroll.renew", e.kind === "renew");
+      put("enroll.new_device", e.kind !== "renew");
+      put("enroll.renew_text", e.kind === "renew" && e.device ? t("renewDevice", { device: "\u2068" + e.device + "\u2069" }) : "");
+      put("enroll.device_row", e.kind !== "renew" && !!e.device); // a renewal names the device in its subtitle
       put("enroll.fingerprint_display", (e.fingerprint || "").replace(/(.{4})/g, "$1 ").trim());
       put("enroll.mfa_secret_spaced", spaced(e.mfa_secret));
     }
@@ -84,6 +88,7 @@
       put("update.download_url", u.download_url);
     }
     put("replacing", view.replacing);
+    put("first_setup", !view.replacing); // the returning-user hint is for a computer with no enrollment
     put("app.version_text", app.version ? t("version", { v: app.version }) : "");
     put("app.developer", app.developer);
     put("app.requires_text", app.min_server ? t("requiresServer", { v: app.min_server }) : "");
