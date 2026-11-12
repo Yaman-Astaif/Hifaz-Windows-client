@@ -91,9 +91,16 @@ type enrollment struct {
 	codeRequired bool // two-step setup was saved in an earlier attempt with this link
 }
 
+// signinStep is a sign-in waiting for its verification code.
 type signinStep struct {
-	stepToken string
+	stepToken  string
+	wgPublic   string // the WireGuard key announced with the password
+	wrongCodes int
 }
+
+// codeTries is how many wrong codes the server accepts in one sign-in step
+// before it ends the step (protocol section 8).
+const codeTries = 3
 
 type session struct {
 	client  *protocol.Client
@@ -591,7 +598,7 @@ func (c *Controller) credentials() (*protocol.Client, *keystore.Secrets, *protoc
 }
 
 func (c *Controller) signIn(password, otp string) {
-	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth, wgPublic string) (*protocol.LoginResult, error) {
+	c.startSession(nil, func(ctx context.Context, client *protocol.Client, auth protocol.Auth, wgPublic string) (*protocol.LoginResult, error) {
 		return client.Login(ctx, auth, protocol.LoginRequest{Username: c.account.Username,
 			Password: password, OTP: strings.TrimSpace(otp), WGPublicKey: wgPublic})
 	})
@@ -600,19 +607,22 @@ func (c *Controller) signIn(password, otp string) {
 func (c *Controller) signInOTP(otp string) {
 	step := c.signin
 	if step == nil {
+		// No step to send the code to: start again rather than do nothing.
+		c.setView(View{Screen: ScreenSignIn})
 		return
 	}
 	// The WireGuard key was announced with the password; the server keeps it
 	// for this step.
-	c.startSession(func(ctx context.Context, client *protocol.Client, auth protocol.Auth, _ string) (*protocol.LoginResult, error) {
+	c.startSession(step, func(ctx context.Context, client *protocol.Client, auth protocol.Auth, _ string) (*protocol.LoginResult, error) {
 		return client.LoginOTP(ctx, auth, step.stepToken, strings.TrimSpace(otp))
 	})
 }
 
 // startSession runs one sign-in call and, on success, brings the tunnel up.
 // call gets the public key of the WireGuard key this sign-in uses: the
-// renewed one if a renewal is pending, which the sign-in then adopts.
-func (c *Controller) startSession(call func(context.Context, *protocol.Client, protocol.Auth, string) (*protocol.LoginResult, error)) {
+// renewed one if a renewal is pending, which the sign-in then adopts. step
+// is the code step the call completes, or nil for a sign-in with the password.
+func (c *Controller) startSession(step *signinStep, call func(context.Context, *protocol.Client, protocol.Auth, string) (*protocol.LoginResult, error)) {
 	if c.session != nil {
 		return
 	}
@@ -644,6 +654,13 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 		c.fail(err)
 		return
 	}
+	if step != nil && step.wgPublic != wgPub.String() {
+		// The server would open the session with the key announced with the
+		// password, which this computer no longer uses: start again.
+		c.signin = nil
+		c.setView(View{Screen: ScreenSignIn, Error: &ViewError{Code: ErrSignInStepExpired}})
+		return
+	}
 	nonce, err := c.o.Service.Nonce()
 	if err != nil {
 		c.fail(err)
@@ -651,24 +668,11 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 	}
 	res, err := call(ctx, client, protocol.Auth{Signer: signer, Nonce: nonce}, wgPub.String())
 	if err != nil {
-		c.signin = nil
-		switch protocol.ErrorCode(err) {
-		case protocol.ErrCodeKeysExpired:
-			c.setView(View{Screen: ScreenSetup, Error: viewError(err), Replacing: true})
-			return
-		case protocol.ErrCodeAppTooOld:
-			c.showUpdate(info)
-			return
-		}
-		c.fail(err)
-		if c.view.Screen == ScreenSignInOTP && protocol.ErrorCode(err) == protocol.ErrCodeInvalidCredentials {
-			c.view.Screen = ScreenSignIn // the step is used up: start again
-			c.show()
-		}
+		c.signInFail(step, info, err)
 		return
 	}
 	if res.OTPRequired {
-		c.signin = &signinStep{stepToken: res.StepToken}
+		c.signin = &signinStep{stepToken: res.StepToken, wgPublic: wgPub.String()}
 		c.setView(View{Screen: ScreenSignInOTP})
 		return
 	}
@@ -687,7 +691,9 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 		lctx, lcancel := c.ctx()
 		client.Logout(lctx, protocol.Auth{Signer: signer, Nonce: mustNonce(), SessionToken: res.Session.SessionToken})
 		lcancel()
-		c.fail(err)
+		// Any code step is used up: the next try starts with the password.
+		c.o.Log("bringing the tunnel up failed", "err", err)
+		c.setView(View{Screen: ScreenSignIn, Error: viewError(err)})
 		return
 	}
 	sctx, scancel := context.WithCancel(context.Background())
@@ -699,6 +705,62 @@ func (c *Controller) startSession(call func(context.Context, *protocol.Client, p
 	go c.follow(sctx, s)
 	go c.refreshStats(sctx, s)
 	c.maybeRenew(s)
+}
+
+// signInFail handles a failed sign-in call. A failed code keeps its step
+// when the server does (protocol section 8), so the code screen always has
+// something to retry; otherwise the user starts again with the password.
+func (c *Controller) signInFail(step *signinStep, info *protocol.Info, err error) {
+	code := protocol.ErrorCode(err)
+	switch code {
+	case protocol.ErrCodeKeysExpired:
+		c.signin = nil
+		c.setView(View{Screen: ScreenSetup, Error: viewError(err), Replacing: true})
+		return
+	case protocol.ErrCodeAppTooOld:
+		c.signin = nil
+		c.showUpdate(info)
+		return
+	}
+	if step == nil || c.signin != step {
+		c.signin = nil
+		c.fail(err)
+		return
+	}
+	c.o.Log("sign-in code failed", "err", err)
+	switch {
+	case code == protocol.ErrCodeInvalidCredentials:
+		// A wrong code: the server ends the step at the last try.
+		if step.wrongCodes++; step.wrongCodes < codeTries {
+			c.setView(View{Screen: ScreenSignInOTP, Error: &ViewError{Code: protocol.ErrCodeInvalidCode}})
+			return
+		}
+		c.signin = nil
+		c.setView(View{Screen: ScreenSignIn, Error: viewError(err)})
+	case code == protocol.ErrCodeInvalidStep:
+		c.signin = nil
+		c.setView(View{Screen: ScreenSignIn, Error: &ViewError{Code: ErrSignInStepExpired}})
+	case keepsStep(err):
+		c.setView(View{Screen: ScreenSignInOTP, Error: viewError(err)})
+	default:
+		c.signin = nil
+		c.setView(View{Screen: ScreenSignIn, Error: viewError(err)})
+	}
+}
+
+// keepsStep reports whether the server left the code step as it was: the
+// call did not reach it or got no answer, or it refused the call before
+// looking at the step.
+func keepsStep(err error) bool {
+	var api *protocol.APIError
+	if !errors.As(err, &api) {
+		return true // network, deadline or an unreadable answer
+	}
+	switch api.Code {
+	case protocol.ErrCodeTimeout, protocol.ErrCodeRateLimited, protocol.ErrCodeClockSkew:
+		return true
+	}
+	return api.Status >= 500
 }
 
 func mustNonce() string {

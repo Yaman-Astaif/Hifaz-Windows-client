@@ -36,6 +36,13 @@ import (
 // OTP is the one code every MFA user's authenticator shows.
 const OTP = "123456"
 
+// The sign-in code step, as on the real server (protocol section 8): it
+// lasts five minutes and ends at the third wrong code.
+const (
+	loginStepTTL   = 5 * time.Minute
+	loginStepTries = 3
+)
+
 // Server is a running fake server.
 type Server struct {
 	ts       *httptest.Server
@@ -77,6 +84,8 @@ type step struct {
 	link       string
 	needsSetup bool         // cleared once two-step setup succeeds, as on the real server
 	wgKey      protocol.Key // sign-in: the WireGuard key announced
+	expires    time.Time    // sign-in: when the step ends
+	tries      int          // sign-in: wrong codes so far
 }
 
 // Device is an enrolled app device as the server records it. After a
@@ -599,7 +608,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, q *request) {
 	}
 	if u.mfa && req.OTP == "" {
 		token := s.random()
-		s.steps[token] = &step{link: "login:" + q.device.ID, wgKey: q.wgKey}
+		s.steps[token] = &step{link: "login:" + q.device.ID, wgKey: q.wgKey, expires: s.now().Add(loginStepTTL)}
 		writeJSON(w, map[string]string{"status": protocol.StatusOTPRequired, "step_token": token})
 		return
 	}
@@ -620,7 +629,15 @@ func (s *Server) handleLoginOTP(w http.ResponseWriter, q *request) {
 		return
 	}
 	st := s.steps[req.StepToken]
-	if st == nil || st.link != "login:"+q.device.ID || req.OTP != OTP {
+	if st == nil || st.link != "login:"+q.device.ID || !s.now().Before(st.expires) {
+		delete(s.steps, req.StepToken)
+		writeError(w, 400, protocol.ErrCodeInvalidStep)
+		return
+	}
+	if req.OTP != OTP {
+		if st.tries++; st.tries >= loginStepTries {
+			delete(s.steps, req.StepToken)
+		}
 		writeError(w, 401, protocol.ErrCodeInvalidCredentials)
 		return
 	}

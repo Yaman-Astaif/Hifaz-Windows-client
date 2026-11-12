@@ -160,6 +160,10 @@
       const first = prefilled ? document.querySelector('#f-setup button[type="submit"]')
         : document.querySelector('section[data-screen="' + view.screen + '"] input');
       if (first && page === "") first.focus();
+    } else if (!view.busy && view.screen === "signin_otp" && view.error && page === "") {
+      // The step is kept after a wrong code or a passing error: the field
+      // (cleared when the code was sent) is ready for the next one.
+      $("o-code").focus();
     }
   }
 
@@ -199,7 +203,14 @@
     { password: $("e-password").value, otp: $("e-otp").value, device_name: $("e-name").value }));
   onSubmit("f-mfa", () => act("enroll_mfa", { code: $("m-code").value, device_name: $("e-name").value }));
   onSubmit("f-signin", () => act("signin", { password: $("s-password").value, otp: $("s-otp").value }));
-  onSubmit("f-otp", () => act("signin_otp", { otp: $("o-code").value }));
+  // The code is cleared once sent: Windows may merge the busy view into the
+  // answer, so clearing cannot wait for a busy-to-idle change.
+  onSubmit("f-otp", () => {
+    const code = $("o-code");
+    const otp = code.value;
+    code.value = "";
+    act("signin_otp", { otp });
+  });
 
   all("[data-act]").forEach((el) => el.addEventListener("click", () => {
     if (el.dataset.act === "add_server" || el.dataset.act === "enroll_cancel") page = "";

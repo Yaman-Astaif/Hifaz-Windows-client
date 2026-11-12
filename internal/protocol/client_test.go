@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -366,5 +367,62 @@ func TestServerTooOld(t *testing.T) {
 	c, _ := protocol.NewClient(ts.URL, protocol.Pin{}, protocol.Options{HTTPClient: hc})
 	if _, _, err := c.FetchIdentity(context.Background()); protocol.ErrorCode(err) != protocol.ErrCodeServerTooOld {
 		t.Fatalf("no client API: %v", err)
+	}
+}
+
+// The fake server keeps the code step as the real one does (section 8): a
+// missing or expired step is invalid_step, a wrong code is
+// invalid_credentials, and the third wrong code ends the step.
+func TestLoginCodeStep(t *testing.T) {
+	var mu sync.Mutex
+	clock := time.Now()
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	srv := fakeserver.New(t, fakeserver.Options{Now: now})
+	srv.AddUser("alice", "pw", false)
+	enrolled, dev := enroll(t, srv, "alice")
+	c := newClient(t, srv, enrolled.Pin(), now)
+	ctx := context.Background()
+	step := func() string {
+		t.Helper()
+		res, err := c.Login(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t)},
+			protocol.LoginRequest{Username: "alice", Password: "pw"})
+		if err != nil || !res.OTPRequired {
+			t.Fatalf("login: %+v %v", res, err)
+		}
+		return res.StepToken
+	}
+	otp := func(token, code string) error {
+		_, err := c.LoginOTP(ctx, protocol.Auth{Signer: dev.signer, Nonce: nonce(t)}, token, code)
+		return err
+	}
+
+	if err := otp("no-such-step", fakeserver.OTP); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+		t.Fatalf("missing step: %v", err)
+	}
+
+	token := step()
+	for i := 1; i <= 3; i++ {
+		if err := otp(token, "000000"); protocol.ErrorCode(err) != protocol.ErrCodeInvalidCredentials {
+			t.Fatalf("wrong code %d: %v", i, err)
+		}
+	}
+	if err := otp(token, fakeserver.OTP); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+		t.Fatalf("after three wrong codes: %v", err)
+	}
+
+	token = step()
+	if err := otp(token, "000000"); protocol.ErrorCode(err) != protocol.ErrCodeInvalidCredentials {
+		t.Fatalf("wrong code: %v", err)
+	}
+	if err := otp(token, fakeserver.OTP); err != nil {
+		t.Fatalf("right code after a wrong one: %v", err)
+	}
+
+	token = step()
+	mu.Lock()
+	clock = clock.Add(5*time.Minute + time.Second)
+	mu.Unlock()
+	if err := otp(token, fakeserver.OTP); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+		t.Fatalf("expired step: %v", err)
 	}
 }
