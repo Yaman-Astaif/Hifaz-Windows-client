@@ -5,3 +5,7 @@
 *.wixobj
 *.wixpdb
 *.syso
+
+# Claude Code: the local action log and personal settings
+.claude/logs/
+.claude/settings.local.json
