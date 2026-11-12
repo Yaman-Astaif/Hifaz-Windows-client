@@ -41,8 +41,8 @@ type View struct {
 	// Replacing: the user is adding a server while one is enrolled; the
 	// old one is removed when the new enrollment succeeds.
 	Replacing bool `json:"replacing,omitempty"`
-	// Link prefills the setup screen after an enrollment step timed out on
-	// the server, so the user only presses Continue. It is never logged.
+	// Link prefills the setup screen after an enrollment step timed out or
+	// was interrupted, so the user only presses Continue. It is never logged.
 	Link string `json:"link,omitempty"`
 }
 
@@ -72,6 +72,9 @@ type EnrollView struct {
 	NameEditable bool   `json:"name_editable"`
 	MFAURI       string `json:"mfa_uri,omitempty"`
 	MFASecret    string `json:"mfa_secret,omitempty"`
+	// CodeRequired: two-step verification was set up in an earlier,
+	// interrupted attempt with this link, so the code is no longer optional.
+	CodeRequired bool `json:"code_required,omitempty"`
 }
 
 // SessionView describes the connected session.
@@ -103,10 +106,16 @@ const (
 	ErrNoAccount          = "no_account"
 	ErrKeystore           = "keystore"
 	ErrInternal           = "internal"
+	ErrEnrollInterrupted  = "enroll_interrupted" // two-step setup was saved, then the enrollment failed
+	ErrCodeRequired       = "code_required"      // the verification code was left empty
 )
 
 // errServiceUnavailable wraps failures to reach the local service.
 var errServiceUnavailable = errors.New("the Hifaz service is not available")
+
+// errCodeRequired: the user left the verification code empty where it is
+// required; nothing was sent to the server.
+var errCodeRequired = errors.New("the verification code is required")
 
 // viewError turns an error into what the window shows.
 func viewError(err error) *ViewError {
@@ -134,6 +143,8 @@ func viewError(err error) *ViewError {
 		return &ViewError{Code: ErrInvalidLink}
 	case errors.Is(err, errNoAccount):
 		return &ViewError{Code: ErrNoAccount}
+	case errors.Is(err, errCodeRequired):
+		return &ViewError{Code: ErrCodeRequired}
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr), errors.As(err, &urlErr):
 		return &ViewError{Code: ErrNetwork}
 	}

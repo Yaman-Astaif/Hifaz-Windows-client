@@ -127,7 +127,9 @@ type winDevice struct {
 	cert    []byte
 }
 
-func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Request)) (*winDevice, string) {
+// newLink adds a user and returns their device enrollment link, the app's
+// client for it (pinned, compatible, link checked) and the password.
+func (e *winEnv) newLink(t *testing.T, user, group string, header func(*http.Request)) (protocol.EnrollLink, *protocol.Client, string) {
 	t.Helper()
 	ctx := context.Background()
 	nu, err := e.adm.AddUser(ctx, user, "", group, "", false)
@@ -154,7 +156,24 @@ func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Requ
 	if err != nil || li.Kind != protocol.LinkDevice {
 		t.Fatalf("enroll info %+v %v", li, err)
 	}
-	st, err := c.EnrollStart(ctx, link.Token, nu.Password, "")
+	return link, c, nu.Password
+}
+
+// finishRequest is the app's enroll/finish request with fresh keys.
+func (e *winEnv) finishRequest(t *testing.T, stepToken string) (protocol.EnrollFinishRequest, protocol.Key, ed25519.PrivateKey) {
+	t.Helper()
+	wgPriv, wgPub, _ := protocol.GenerateWireGuardKey()
+	devPub, devPriv, _ := ed25519.GenerateKey(rand.Reader)
+	return protocol.EnrollFinishRequest{StepToken: stepToken, Nonce: e.svcNonce(t), Platform: "windows",
+		DeviceName: "PC", WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub),
+		App: protocol.AppIdentity{Name: "Hifaz for Windows", Version: "0.1.0"}, OS: "Windows 11 Pro 24H2 (26100)"}, wgPriv, devPriv
+}
+
+func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Request)) (*winDevice, string) {
+	t.Helper()
+	ctx := context.Background()
+	link, c, password := e.newLink(t, user, group, header)
+	st, err := c.EnrollStart(ctx, link.Token, password, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +184,7 @@ func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Requ
 			t.Fatal(err)
 		}
 	}
-	wgPriv, wgPub, _ := protocol.GenerateWireGuardKey()
-	devPub, devPriv, _ := ed25519.GenerateKey(rand.Reader)
-	req := protocol.EnrollFinishRequest{StepToken: st.StepToken, Nonce: e.svcNonce(t), Platform: "windows",
-		DeviceName: "PC", WGPublicKey: wgPub.String(), DeviceKey: protocol.EncodeEd25519PublicKey(devPub),
-		App: protocol.AppIdentity{Name: "Hifaz for Windows", Version: "0.1.0"}, OS: "Windows 11 Pro 24H2 (26100)"}
+	req, wgPriv, devPriv := e.finishRequest(t, st.StepToken)
 	if st.CertRequired {
 		key, csr, err := protocol.NewCertificateRequest()
 		if err != nil {
@@ -197,7 +212,7 @@ func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Requ
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.wg.PresharedKey(wgPub.String()) != "" && e.wg.PresharedKey(wgPub.String()) != psk.String() {
+	if e.wg.PresharedKey(req.WGPublicKey) != "" && e.wg.PresharedKey(req.WGPublicKey) != psk.String() {
 		t.Fatal("opened PSK differs from the server's")
 	}
 	if st.CertRequired {
@@ -210,7 +225,7 @@ func (e *winEnv) enroll(t *testing.T, user, group string, header func(*http.Requ
 	}
 	d.signer, _ = protocol.NewKeySigner(enrolled.DeviceID, devPriv)
 	d.wgPriv, d.psk = wgPriv, psk
-	return d, nu.Password
+	return d, password
 }
 
 // signIn signs in through the OTP step and brings the service's tunnel up.
@@ -362,6 +377,72 @@ func TestWinClientCertificateGroup(t *testing.T) {
 		t.Fatal("no certificate issued for a certificate group")
 	}
 	e.signIn(t, d, "rami", pw, "")
+}
+
+// TestWinClientEnrollRestart checks the server behaviour the app relies on
+// when an enrollment fails after two-step setup was saved (issues #9, #14).
+func TestWinClientEnrollRestart(t *testing.T) {
+	e := newWinEnv(t)
+	ctx := context.Background()
+	link, c, pw := e.newLink(t, "erin", "staff", nil)
+	st, err := c.EnrollStart(ctx, link.Token, pw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.NeedsMFASetup {
+		t.Fatal("a user without MFA in an MFA group must set it up")
+	}
+	d := &winDevice{client: c}
+	d.secret, _ = auth.DecodeTOTPSecret(st.MFASecret)
+
+	// 1. A second enroll/mfa is refused at once.
+	if err := c.EnrollMFA(ctx, st.StepToken, e.code(d)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.EnrollMFA(ctx, st.StepToken, e.code(d)); protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep {
+		t.Fatalf("second enroll/mfa: %v", err)
+	}
+
+	// 2. The link survives: enroll/info still answers.
+	if li, err := c.EnrollInfo(ctx, link.Token); err != nil || li.Kind != protocol.LinkDevice {
+		t.Fatalf("enroll info after an unfinished enrollment: %+v %v", li, err)
+	}
+
+	// 3. Restart: without a code the server refuses (it counts toward the
+	// lockout, so the app never sends this); with the code, no setup again.
+	if _, err := c.EnrollStart(ctx, link.Token, pw, ""); protocol.ErrorCode(err) != protocol.ErrCodeInvalidCredentials {
+		t.Fatalf("enroll/start without the code after MFA setup: %v", err)
+	}
+	st2, err := c.EnrollStart(ctx, link.Token, pw, e.code(d))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.NeedsMFASetup || st2.StepToken == "" {
+		t.Fatalf("restart after MFA setup: %+v", st2)
+	}
+
+	// 4. A failed finish keeps the step.
+	bad, _, _ := e.finishRequest(t, st2.StepToken)
+	bad.WGPublicKey = "not-a-key"
+	if _, _, err := c.EnrollFinish(ctx, bad); protocol.ErrorCode(err) != protocol.ErrCodeBadRequest {
+		t.Fatalf("enroll/finish with a bad key: %v", err)
+	}
+	req, _, _ := e.finishRequest(t, st2.StepToken)
+	enrolled, _, err := c.EnrollFinish(ctx, req)
+	if err != nil {
+		t.Fatalf("enroll/finish after a failed one: %v", err)
+	}
+	if enrolled.Config == nil {
+		t.Fatal("no config")
+	}
+	if _, err := enrolled.Config.Parse(); err != nil {
+		t.Fatalf("the server's configuration fails the app's checks: %v", err)
+	}
+
+	// 5. The link is used up only now.
+	if _, err := c.EnrollInfo(ctx, link.Token); protocol.ErrorCode(err) != protocol.ErrCodeInvalidLink {
+		t.Fatalf("enroll info after enrollment: %v", err)
+	}
 }
 
 func b64std(b []byte) string { return base64.StdEncoding.EncodeToString(b) }

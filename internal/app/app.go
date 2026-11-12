@@ -72,6 +72,10 @@ type Controller struct {
 	enroll  *enrollment
 	signin  *signinStep
 	session *session
+	// mfaSetLink is the link token of a user who set up two-step
+	// verification in an enrollment that was then interrupted: with that
+	// link the code is required. Memory only, never logged.
+	mfaSetLink string
 }
 
 type enrollment struct {
@@ -83,6 +87,8 @@ type enrollment struct {
 	stepToken    string
 	certRequired bool
 	replacing    bool
+	mfaDone      bool // two-step setup succeeded on the server in this attempt
+	codeRequired bool // two-step setup was saved in an earlier attempt with this link
 }
 
 type signinStep struct {
@@ -327,7 +333,12 @@ func (c *Controller) enrollLink(raw string) {
 		c.fail(&protocol.APIError{Code: protocol.ErrCodeUseBrowser})
 		return
 	}
-	c.enroll = &enrollment{raw: raw, link: link, client: client, pin: pin, info: li, replacing: replacing}
+	codeRequired := c.mfaSetLink != "" && c.mfaSetLink == link.Token
+	if !codeRequired {
+		c.mfaSetLink = ""
+	}
+	c.enroll = &enrollment{raw: raw, link: link, client: client, pin: pin, info: li, replacing: replacing,
+		codeRequired: codeRequired}
 	screen := ScreenEnrollPassword
 	if link.Fingerprint == "" {
 		screen = ScreenEnrollFingerprint // an older link: the user compares the fingerprint
@@ -346,7 +357,8 @@ func (c *Controller) showUpdate(info *protocol.Info) {
 func (c *Controller) enrollView() *EnrollView {
 	e := c.enroll
 	return &EnrollView{Server: e.link.Server, Fingerprint: string(e.pin.Fingerprint), Kind: e.info.Kind,
-		Username: e.info.Username, Device: e.info.Device, NameEditable: e.info.NameEditable}
+		Username: e.info.Username, Device: e.info.Device, NameEditable: e.info.NameEditable,
+		CodeRequired: e.codeRequired}
 }
 
 func (c *Controller) enrollConfirmFingerprint() {
@@ -359,6 +371,12 @@ func (c *Controller) enrollConfirmFingerprint() {
 func (c *Controller) enrollPassword(password, otp, deviceName string) {
 	e := c.enroll
 	if e == nil {
+		return
+	}
+	// Two-step verification is set up: an empty code would only count
+	// toward the lockout on the server, so it is refused here.
+	if e.codeRequired && strings.TrimSpace(otp) == "" {
+		c.fail(errCodeRequired)
 		return
 	}
 	c.setBusy(true)
@@ -391,22 +409,34 @@ func (c *Controller) enrollMFA(code, deviceName string) {
 		c.enrollFail(err)
 		return
 	}
+	e.mfaDone = true
 	c.enrollFinish(ctx, deviceName)
 }
 
 // enrollFail shows the error of an enrollment call to the server. When the
-// server's step has timed out, retrying on this screen cannot work: the app
-// goes back to the setup screen with the link filled in, so the user only
-// presses Continue.
+// server's step has timed out, or was used up by a two-step setup that
+// succeeded before the enrollment failed, retrying on this screen cannot
+// work: the app goes back to the setup screen with the link filled in, so
+// the user only presses Continue. If two-step verification is set up, the
+// next try with that link requires the code.
 func (c *Controller) enrollFail(err error) {
 	e := c.enroll
 	if protocol.ErrorCode(err) != protocol.ErrCodeInvalidStep || e == nil {
 		c.fail(err)
 		return
 	}
-	c.o.Log("enrollment step timed out; back to the link", "err", err)
+	if e.mfaDone || e.codeRequired {
+		c.mfaSetLink = e.link.Token
+	}
+	verr := viewError(err)
+	if e.mfaDone {
+		verr = &ViewError{Code: ErrEnrollInterrupted}
+		c.o.Log("enrollment interrupted after MFA setup; back to the link", "err", err)
+	} else {
+		c.o.Log("enrollment step timed out; back to the link", "err", err)
+	}
 	c.enroll = nil
-	c.setView(View{Screen: ScreenSetup, Error: viewError(err), Replacing: e.replacing, Link: e.raw})
+	c.setView(View{Screen: ScreenSetup, Error: verr, Replacing: e.replacing, Link: e.raw})
 }
 
 // enrollFinish makes the device's keys, registers them with the server and
@@ -488,7 +518,7 @@ func (c *Controller) enrollFinish(ctx context.Context, deviceName string) {
 		c.forget(old.Server)
 	}
 	c.o.Log("enrolled", "server", account.Server, "device", account.DeviceID)
-	c.account, c.enroll = saved, nil
+	c.account, c.enroll, c.mfaSetLink = saved, nil, ""
 	c.setView(View{Screen: ScreenSignIn, Notice: "enrolled"})
 }
 
