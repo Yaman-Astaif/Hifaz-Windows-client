@@ -787,7 +787,11 @@ func (c *Controller) follow(ctx context.Context, s *session) {
 	for ctx.Err() == nil {
 		nonce, err := c.o.Service.Nonce()
 		if err != nil {
-			c.post(func() { c.sessionLost(s, errServiceUnavailable) })
+			c.o.Log("following the session: service failed", "err", err)
+			if !errors.Is(err, ipc.ErrUnavailable) {
+				err = errServiceUnavailable
+			}
+			c.post(func() { c.sessionLost(s, err) })
 			return
 		}
 		signer := s.signer.Load()

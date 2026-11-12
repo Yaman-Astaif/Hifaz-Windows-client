@@ -101,8 +101,10 @@ const (
 	ErrInvalidLink        = "invalid_link"
 	ErrIdentityMismatch   = "identity_mismatch"
 	ErrBadSignature       = "bad_signature"
-	ErrServiceUnavailable = "service_unavailable"
-	ErrUnsupportedLink    = "unsupported_link" // an MFA or certificate link: use the browser
+	ErrServiceUnavailable = "service_unavailable" // the service is not running
+	ErrServiceRefused     = "service_refused"     // the service denied the app, or speaks another version
+	ErrServiceUntrusted   = "service_untrusted"   // the pipe is not the service's; nothing was sent
+	ErrUnsupportedLink    = "unsupported_link"    // an MFA or certificate link: use the browser
 	ErrNoAccount          = "no_account"
 	ErrKeystore           = "keystore"
 	ErrInternal           = "internal"
@@ -129,11 +131,20 @@ func viewError(err error) *ViewError {
 	}
 	var svc *ipc.Error
 	if errors.As(err, &svc) {
+		if svc.Code == ipc.ErrBadRequest {
+			// The service did not understand the app: another version.
+			return &ViewError{Code: ErrServiceRefused}
+		}
 		return &ViewError{Code: svc.Code}
 	}
 	var netErr net.Error
 	var urlErr *url.Error
 	switch {
+	// The causes first: each also matches ipc.ErrUnavailable.
+	case errors.Is(err, ipc.ErrServiceUntrusted):
+		return &ViewError{Code: ErrServiceUntrusted}
+	case errors.Is(err, ipc.ErrServiceRefused):
+		return &ViewError{Code: ErrServiceRefused}
 	case errors.Is(err, errServiceUnavailable), errors.Is(err, ipc.ErrUnavailable):
 		return &ViewError{Code: ErrServiceUnavailable}
 	case errors.Is(err, protocol.ErrIdentityMismatch):

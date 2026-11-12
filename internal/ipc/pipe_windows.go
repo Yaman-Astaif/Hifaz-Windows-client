@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"sync"
@@ -158,11 +159,13 @@ func (l *Listener) Close() error {
 // Dial connects to the service. It checks that the pipe belongs to SYSTEM
 // before returning, so the app never sends keys to a pipe someone else made.
 // The service may identify the app but cannot act as it
-// (SECURITY_IDENTIFICATION).
+// (SECURITY_IDENTIFICATION). Errors match ErrUnavailable and, where the
+// reason is known, ErrServiceNotRunning, ErrServiceRefused or
+// ErrServiceUntrusted, with the Windows error kept underneath.
 func Dial(name string, timeout time.Duration) (*Conn, error) {
 	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
-		return nil, err
+		return nil, unavailable(err)
 	}
 	return dial(name, timeout, system)
 }
@@ -171,7 +174,7 @@ func Dial(name string, timeout time.Duration) (*Conn, error) {
 func dial(name string, timeout time.Duration, owner *windows.SID) (*Conn, error) {
 	path, err := windows.UTF16PtrFromString(name)
 	if err != nil {
-		return nil, err
+		return nil, unavailable(err)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
@@ -182,18 +185,24 @@ func dial(name string, timeout time.Duration, owner *windows.SID) (*Conn, error)
 		h, err := windows.CreateFile(path, windows.GENERIC_READ|windows.FILE_WRITE_DATA, 0, nil,
 			windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED|windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 		if err == nil {
+			// Before anything is written: a pipe that fails this check
+			// never sees a byte from the app.
 			if err := checkServerOwner(h, owner); err != nil {
 				windows.CloseHandle(h)
 				return nil, err
 			}
-			return newConn(h)
+			c, err := newConn(h)
+			if err != nil {
+				return nil, unavailable(err)
+			}
+			return c, nil
 		}
 		if err != windows.ERROR_PIPE_BUSY && err != windows.ERROR_FILE_NOT_FOUND {
-			return nil, err
+			return nil, dialFailure(err)
 		}
 		left := time.Until(deadline)
-		if left <= 0 {
-			return nil, err
+		if left <= 0 { // the last error says what was still wrong
+			return nil, dialFailure(err)
 		}
 		if err == windows.ERROR_PIPE_BUSY {
 			procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(path)), uintptr(min(left, time.Second)/time.Millisecond))
@@ -203,20 +212,22 @@ func dial(name string, timeout time.Duration, owner *windows.SID) (*Conn, error)
 	}
 }
 
-// ErrNotService means the pipe does not belong to SYSTEM.
-var ErrNotService = errors.New("ipc: the pipe does not belong to the Hifaz service")
-
+// checkServerOwner fails with ErrServiceUntrusted when the pipe's owner is
+// not want. A failure to read the owner is plain ErrUnavailable.
 func checkServerOwner(h windows.Handle, want *windows.SID) error {
 	sd, err := windows.GetSecurityInfo(h, windows.SE_KERNEL_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	owner, _, err := sd.Owner()
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
-	if owner == nil || !owner.Equals(want) {
-		return ErrNotService
+	if owner == nil {
+		return fmt.Errorf("%w: no owner", ErrServiceUntrusted)
+	}
+	if !owner.Equals(want) {
+		return fmt.Errorf("%w: owner %s", ErrServiceUntrusted, owner)
 	}
 	return nil
 }

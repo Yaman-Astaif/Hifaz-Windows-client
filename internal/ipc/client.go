@@ -57,7 +57,7 @@ func (c *Client) ask(req Request) (*Response, error) {
 		if c.query == nil {
 			conn, err := c.dial()
 			if err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+				return nil, unavailable(err)
 			}
 			c.query = conn
 		}
@@ -70,7 +70,7 @@ func (c *Client) ask(req Request) (*Response, error) {
 		c.query.Close()
 		c.query, lastErr = nil, err
 	}
-	return nil, fmt.Errorf("%w: %v", ErrUnavailable, lastErr)
+	return nil, transportFailure(lastErr)
 }
 
 // Nonce asks for a nonce for one signed server request.
@@ -113,7 +113,7 @@ func (c *Client) Connect(server string, doc protocol.SignedDocument, priv, psk p
 	}
 	conn, err := c.dial()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, unavailable(err)
 	}
 	req := &Request{Op: OpConnect, Server: server, Document: &doc,
 		PrivateKey: append([]byte(nil), priv[:]...), PSK: append([]byte(nil), psk[:]...)}
@@ -178,11 +178,15 @@ func (c *Client) Close() {
 	c.qmu.Unlock()
 }
 
-// wrap marks transport failures as ErrUnavailable; service errors pass.
-func (c *Client) wrap(err error) error {
-	var svcErr *Error
-	if errors.As(err, &svcErr) {
+// wrap marks transport failures as ErrUnavailable, with their cause;
+// service errors pass.
+func (c *Client) wrap(err error) error { return transportFailure(err) }
+
+// unavailable marks a dial failure as ErrUnavailable. A dial error that
+// already gives the cause (see Dial) passes unchanged.
+func unavailable(err error) error {
+	if errors.Is(err, ErrUnavailable) {
 		return err
 	}
-	return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
