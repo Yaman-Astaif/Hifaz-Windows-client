@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.2.0 — 2026-11-13
+
+Still needs a Hifaz server 0.8.0 or later; client protocol version 1 is
+unchanged. Upgrading over 0.1.x keeps the enrollment.
+
+**Service**
+- Fixed: normal (non-administrator) users could not reach the Hifaz service,
+  and the app said the service was not running.
+- The app now says why it cannot use the service, with its own message for
+  each case: the service is not running; it refused the app (for example
+  when the app and the service are different versions); or something other
+  than the Hifaz service answered, in which case nothing is sent.
+
+**Enrollment**
+- People who used Hifaz before are told which link to ask for: a renewal
+  link after reinstalling, a new device link for another computer. A renewal
+  link greets you with "Welcome back" and the device's name.
+- The app checks that the Hifaz service answers before it contacts the
+  server, so a service problem no longer uses up the enrollment steps.
+- If a step times out, the app goes back to the first screen with the link
+  already filled in: press Continue to start again.
+- If enrollment is interrupted after two-step verification was set up, the
+  app says so, and the next attempt asks for the code. An empty code is
+  caught by the app and no longer counts as a failed sign-in.
+
+**Sign-in**
+- After a wrong code you can try again on the same screen (up to three
+  times, as the server allows) instead of starting over with the password.
+- A network error or a busy server no longer ends the code step: press
+  Connect again. When the step has timed out, the app says so and asks you
+  to sign in again.
+- If the tunnel cannot be opened after a correct code, the app signs out on
+  the server and goes back to the sign-in screen.
+
+**Window**
+- The window can be resized and maximized, down to a minimum size, and stays
+  maximized when reopened from the tray (0.1.2 had a fixed size).
+- Tighter spacing: the enrollment password screen fits the window without
+  scrolling at its default size.
+
+**Testing**
+- The app's protocol client is checked against the Hifaz server code for
+  enrollment restarts and the sign-in code step.
+- Every build checks on Windows that the window can be resized, never goes
+  below its minimum size, and fits the enrollment password screen in Arabic
+  and English; the service connection is tested for a missing service and
+  for refused access.
+
 ## 0.1.2 — 2026-11-11
 
 **Window**
