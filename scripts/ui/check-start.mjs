@@ -1,6 +1,7 @@
 // UI test, first start: the installed app shows its first screen, styled,
-// in Arabic and right to left; English and the dark theme work. Writes
-// screenshots to the folder given as the first argument.
+// in Arabic and right to left; English and the dark theme work; the
+// longest screen fits the window without scrolling. Writes screenshots to
+// the folder given as the first argument.
 //
 //   node scripts/ui/check-start.mjs <out-dir> [port]
 import { connect, waitFor } from "./cdp.mjs";
@@ -74,8 +75,44 @@ try {
   check(/Version \d+\.\d+\.\d+/.test(about), "About shows the version");
   check(about.includes("0.8.0"), "About shows the server version needed");
 
-  // Back to Arabic and the light theme for the next start.
-  await cdp.evaluate(`document.getElementById("theme").click(); document.getElementById("lang").click()`);
+  // The longest screen fits the window as it opens (460x760 page pixels)
+  // without scrolling: enrollment password with an error, the device row
+  // and the device name field.
+  await cdp.evaluate(`window.hifaz.showPage(""); window.hifaz.onView({ screen: "enroll_password",
+    error: { code: "invalid_credentials" },
+    enroll: { server: "https://vpn.example.com", username: "first.last", device: "Work laptop",
+      name_editable: true, kind: "device" } })`);
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 460, height: 760, deviceScaleFactor: 1, mobile: false });
+  await waitFor(cdp, `!document.querySelector('section[data-screen="enroll_password"]').hidden`, "the enrollment password screen");
+  await cdp.evaluate("document.fonts.ready.then(() => true)");
+  const fits = async (what, file) => {
+    const f = await cdp.evaluate(`(() => {
+      const s = document.querySelector('section[data-screen="enroll_password"]');
+      const cancel = s.querySelector('button[data-act="enroll_cancel"]');
+      return {
+        scroll: document.scrollingElement.scrollHeight, inner: innerHeight, width: innerWidth,
+        cancel: Math.ceil(cancel.getBoundingClientRect().bottom),
+        error: !document.getElementById("error").hidden,
+        deviceName: !s.querySelector('[data-show="enroll.name_editable"]').hidden,
+      };
+    })()`);
+    console.log(JSON.stringify(f));
+    await cdp.screenshot(`${out}/${file}`);
+    check(f.width === 460 && f.inner === 760, `${what}: page is 460x760 (got ${f.width}x${f.inner})`);
+    check(f.error && f.deviceName, `${what}: error and device name shown`);
+    check(f.scroll <= f.inner, `${what}: no scrolling (content ${f.scroll}px)`);
+    check(f.cancel <= f.inner, `${what}: Cancel button visible (bottom at ${f.cancel}px)`);
+  };
+  await fits("enrollment password, English", "07-enroll-password-en-dark.png");
+  await cdp.evaluate(`document.getElementById("lang").click()`);
+  await waitFor(cdp, `document.documentElement.lang === "ar" && document.documentElement.dir === "rtl"`, "Arabic");
+  await cdp.evaluate("document.fonts.ready.then(() => true)");
+  await fits("enrollment password, Arabic", "08-enroll-password-ar-dark.png");
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  await cdp.evaluate(`window.hifaz.onView({ screen: "setup" })`);
+
+  // Back to the light theme for the next start (the language is Arabic again).
+  await cdp.evaluate(`document.getElementById("theme").click()`);
 } finally {
   cdp.close();
 }
