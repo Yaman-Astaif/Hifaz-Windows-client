@@ -75,8 +75,7 @@ type link struct {
 
 type step struct {
 	link       string
-	needsSetup bool
-	mfaDone    bool
+	needsSetup bool         // cleared once two-step setup succeeds, as on the real server
 	wgKey      protocol.Key // sign-in: the WireGuard key announced
 }
 
@@ -457,7 +456,7 @@ func (s *Server) handleEnrollMFA(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, protocol.ErrCodeInvalidCode)
 		return
 	}
-	st.mfaDone = true
+	st.needsSetup = false
 	s.users[s.links[st.link].username].mfa = true
 	writeJSON(w, map[string]bool{"done": false})
 }
@@ -473,7 +472,7 @@ func (s *Server) handleEnrollFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.steps[req.StepToken]
-	if st == nil || (st.needsSetup && !st.mfaDone) {
+	if st == nil || st.needsSetup {
 		writeError(w, 400, protocol.ErrCodeInvalidStep)
 		return
 	}

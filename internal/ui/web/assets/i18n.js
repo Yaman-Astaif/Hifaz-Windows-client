@@ -25,6 +25,7 @@ window.I18N = (function () {
       password: "كلمة المرور",
       code: "رمز التحقق",
       codeOptional: "(إن كنت تستخدم المصادقة الثنائية)",
+      codeRequiredNote: "المصادقة الثنائية مُعدّة لحسابك. أدخل رمز التحقق الظاهر في تطبيق المصادقة.",
 
       setupTitle: "إضافة هذا الجهاز",
       setupSub: "الصق رابط التسجيل الذي أرسله إليك المسؤول.",
@@ -139,6 +140,8 @@ window.I18N = (function () {
       bad_signature: "ردّ الخادم غير موقّع بمفتاحه المعروف. لم يُرسَل شيء. تواصل مع المسؤول.",
       service_unavailable: "خدمة حِفاظ لا تعمل على هذا الحاسوب. أعد تشغيل الحاسوب أو أعد تثبيت التطبيق.",
       no_account: "لا يوجد جهاز مسجّل. الصق رابط تسجيل.",
+      enroll_interrupted: "توقّف التسجيل قبل اكتماله. اضغط «متابعة» لإتمامه.",
+      code_required: "أدخل رمز التحقق من تطبيق المصادقة.",
       keystore: "تعذّر فتح مفاتيح هذا الجهاز.",
       internal: "حدث خطأ غير متوقع. حاول مجدداً.",
       server_error: "حدث خطأ في الخادم. حاول مجدداً بعد قليل.",
@@ -164,6 +167,7 @@ window.I18N = (function () {
       password: "Password",
       code: "Verification code",
       codeOptional: "(if you use two-step verification)",
+      codeRequiredNote: "Two-step verification is set up. Enter the code from your authenticator app.",
 
       setupTitle: "Add this device",
       setupSub: "Paste the enrollment link your administrator sent you.",
@@ -274,6 +278,8 @@ window.I18N = (function () {
       bad_signature: "The server's answer is not signed with its known key. Nothing was sent. Contact your administrator.",
       service_unavailable: "The Hifaz service is not running on this computer. Restart the computer or reinstall the app.",
       no_account: "No device is enrolled. Paste an enrollment link.",
+      enroll_interrupted: "Enrollment was interrupted. Press Continue to finish it.",
+      code_required: "Enter the verification code from your authenticator app.",
       keystore: "This device's keys could not be opened.",
       internal: "Something unexpected happened. Try again.",
       server_error: "The server had an error. Try again in a moment.",

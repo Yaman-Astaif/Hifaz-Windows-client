@@ -69,6 +69,9 @@ type engineService struct {
 	e      *daemon.Engine
 	caller daemon.Caller
 	down   atomic.Bool
+	// beforeNonce, when set, runs at the start of Nonce, so a test can act
+	// at the moment the app is about to finish an enrollment.
+	beforeNonce func()
 }
 
 const (
@@ -88,6 +91,9 @@ func (s *engineService) do(conn uint64, req ipc.Request) (*ipc.Response, error) 
 }
 
 func (s *engineService) Nonce() (string, error) {
+	if s.beforeNonce != nil {
+		s.beforeNonce()
+	}
 	r, err := s.do(queryConn, ipc.Request{Op: ipc.OpNonce})
 	if err != nil {
 		return "", err
@@ -533,10 +539,29 @@ func TestEnrollServiceDownAtLink(t *testing.T) {
 }
 
 // The service fails only at the end: the user stays on the step and sees
-// the service error. When the server's step has timed out by the retry, the
-// app goes back to the setup screen with the link filled in.
-func TestEnrollStepExpiredReturnsToSetup(t *testing.T) {
+// the service error. Two-step setup is already saved on the server, so the
+// retry gets invalid_step at once; the app goes back to the setup screen
+// with the link filled in and says the enrollment was interrupted.
+func TestEnrollInterruptedAfterMFA(t *testing.T) {
 	h := newHarness(t)
+	link := h.interruptAfterMFA()
+
+	// Continue with the kept link: the code is now required.
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	v := h.wait(ScreenEnrollPassword)
+	if !v.Enroll.CodeRequired {
+		t.Fatal("code not required after two-step setup was saved")
+	}
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP, DeviceName: "Laptop"})
+	if v := h.wait(ScreenSignIn); v.Account == nil || v.Account.Device != "Laptop" {
+		t.Fatalf("after enrollment %+v", v)
+	}
+}
+
+// interruptAfterMFA sets up two-step verification in an enrollment that
+// fails at the end, and returns the link the setup screen keeps.
+func (h *harness) interruptAfterMFA() string {
+	h.t.Helper()
 	h.srv.AddUser("alice", "pw", false)
 	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
 	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
@@ -548,25 +573,82 @@ func TestEnrollStepExpiredReturnsToSetup(t *testing.T) {
 	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
 	v := h.waitErrorView()
 	if v.Screen != ScreenEnrollMFA || v.Error.Code != ErrServiceUnavailable {
-		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+		h.t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
 	}
 
 	h.svc.down.Store(false)
-	h.srv.ExpireSteps()
 	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
 	v = h.waitErrorView()
-	if v.Screen != ScreenSetup || v.Error.Code != protocol.ErrCodeInvalidStep || v.Link != link || v.Replacing {
-		t.Fatalf("after the step timed out: screen %s, error %q, link %q, replacing %v",
+	if v.Screen != ScreenSetup || v.Error.Code != ErrEnrollInterrupted || v.Link != link || v.Replacing {
+		h.t.Fatalf("after the interrupted enrollment: screen %s, error %q, link %q, replacing %v",
 			v.Screen, v.Error.Code, v.Link, v.Replacing)
 	}
+	return v.Link
+}
 
-	// Continue with the kept link; the user set up MFA in the first attempt.
-	h.ctrl.Do(Action{Name: "enroll_link", Link: v.Link})
+// Once two-step setup is saved, an empty code is refused in the app: the
+// server would count it toward the lockout.
+func TestEnrollEmptyCodeSendsNothing(t *testing.T) {
+	h := newHarness(t)
+	link := h.interruptAfterMFA()
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
 	h.wait(ScreenEnrollPassword)
-	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP, DeviceName: "Laptop"})
-	if v := h.wait(ScreenSignIn); v.Account == nil || v.Account.Device != "Laptop" {
-		t.Fatalf("after enrollment %+v", v)
+
+	n := h.srv.Requests()
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: "  ", DeviceName: "Laptop"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenEnrollPassword || v.Error.Code != ErrCodeRequired {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
 	}
+	if got := h.srv.Requests(); got != n {
+		t.Fatalf("%d requests sent with an empty code", got-n)
+	}
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP, DeviceName: "Laptop"})
+	h.wait(ScreenSignIn)
+}
+
+// A user who already has two-step verification: when the step times out
+// at enroll/finish, the app goes back to setup with the link, and the code
+// stays optional on the next try (nothing was set up in this enrollment).
+func TestEnrollFinishStepExpiredNoMFA(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", true)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	v := h.wait(ScreenEnrollPassword)
+	if v.Enroll.CodeRequired {
+		t.Fatal("code required on a fresh link")
+	}
+	h.svc.beforeNonce = h.srv.ExpireSteps
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw", OTP: fakeserver.OTP, DeviceName: "Laptop"})
+	v = h.waitErrorView()
+	if v.Screen != ScreenSetup || v.Error.Code != protocol.ErrCodeInvalidStep || v.Link != link {
+		t.Fatalf("after the step timed out: screen %s, error %q, link %q", v.Screen, v.Error.Code, v.Link)
+	}
+	h.svc.beforeNonce = nil
+	h.ctrl.Do(Action{Name: "enroll_link", Link: v.Link})
+	if v := h.wait(ScreenEnrollPassword); v.Enroll.CodeRequired {
+		t.Fatal("code required although no two-step setup happened in this enrollment")
+	}
+}
+
+// A wrong code on the two-step setup screen keeps the step: the user stays
+// there and the right code finishes the enrollment.
+func TestEnrollMFAWrongCodeKeepsStep(t *testing.T) {
+	h := newHarness(t)
+	h.srv.AddUser("alice", "pw", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.wait(ScreenEnrollMFA)
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: "000000", DeviceName: "Laptop"})
+	v := h.waitErrorView()
+	if v.Screen != ScreenEnrollMFA || v.Error.Code != protocol.ErrCodeInvalidCode {
+		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+	h.ctrl.Do(Action{Name: "enroll_mfa", Code: fakeserver.OTP, DeviceName: "Laptop"})
+	h.wait(ScreenSignIn)
 }
 
 // Adding a server: a timed-out step goes back to setup still replacing.

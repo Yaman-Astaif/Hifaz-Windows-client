@@ -64,6 +64,9 @@
       put("enroll.username", e.username);
       put("enroll.device", e.device);
       put("enroll.name_editable", e.name_editable);
+      // Two-step verification was set up in an interrupted attempt: the code is required.
+      put("enroll.code_required", !!e.code_required);
+      put("enroll.code_optional", !e.code_required);
       put("enroll.renew", e.kind === "renew");
       put("enroll.new_device", e.kind !== "renew");
       put("enroll.renew_text", e.kind === "renew" && e.device ? t("renewDevice", { device: "\u2068" + e.device + "\u2069" }) : "");
@@ -140,6 +143,7 @@
     document.body.classList.toggle("busy", !!view.busy);
     all("input, select, button").forEach((el) => { el.disabled = !!view.busy && !el.closest("header"); });
 
+    $("e-otp").required = !!(view.enroll && view.enroll.code_required);
     if (view.screen === "enroll_mfa" && view.enroll && view.enroll.mfa_uri) drawQR(view.enroll.mfa_uri);
 
     $("p-lang").value = prefs.lang;
@@ -149,8 +153,8 @@
     if (view.screen !== lastScreen) {
       clearSecrets();
       lastScreen = view.screen;
-      // After a timed-out enrollment step the app sends the link back: the
-      // user only presses Continue.
+      // After a timed-out or interrupted enrollment the app sends the link
+      // back: the user only presses Continue.
       const prefilled = view.screen === "setup" && !!view.link;
       if (prefilled) $("link").value = view.link;
       const first = prefilled ? document.querySelector('#f-setup button[type="submit"]')
