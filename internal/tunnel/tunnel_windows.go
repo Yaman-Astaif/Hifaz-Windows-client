@@ -273,12 +273,26 @@ func (t *Tunnel) Reconfigure(cfg *protocol.TunnelConfig) error {
 	if t.adapter == nil {
 		return errors.New("tunnel not up")
 	}
-	if cfg.EndpointHost != t.host || cfg.EndpointPort != t.endpoint.Port() {
+	switch {
+	case cfg.EndpointHost == t.host && cfg.EndpointPort != t.endpoint.Port():
+		// Only the port changed: keep the address. A lookup now would go
+		// to the server's DNS through the tunnel.
+		t.endpoint = netip.AddrPortFrom(t.endpoint.Addr(), cfg.EndpointPort)
+	case cfg.EndpointHost != t.host:
 		endpoint, err := resolve(cfg.EndpointHost, cfg.EndpointPort)
 		if err != nil {
 			return err
 		}
-		t.endpoint, t.host = endpoint, cfg.EndpointHost
+		if EndpointInside(endpoint.Addr(), cfg.AllowedIPs) {
+			// The server's DNS gave an address only reachable through the
+			// tunnel; the driver does not send the encrypted packets into
+			// its own interface, so the tunnel would stop working. t.host
+			// stays, so the next configuration tries again.
+			t.log("new endpoint resolves inside the tunnel; keeping the current one", "host", cfg.EndpointHost,
+				"address", endpoint.Addr(), "reason", "only reachable through the tunnel itself")
+		} else {
+			t.endpoint, t.host = endpoint, cfg.EndpointHost
+		}
 	}
 	replace := cfg.ServerPublicKey != t.peer
 	if err := t.setPeer(cfg, replace); err != nil {

@@ -77,3 +77,18 @@ func NewPlan(cfg *protocol.TunnelConfig) *Plan {
 	}
 	return p
 }
+
+// EndpointInside reports whether the endpoint address ep is inside one of
+// the narrower routes the server sends. The driver never sends the tunnel's
+// encrypted packets into its own interface, so an endpoint that can only be
+// reached through the tunnel would stop the tunnel working. The server's
+// DNS, which answers every lookup while connected, may give such a private
+// address for a public name.
+//
+// Full-tunnel cover routes (/0 and /1) are ignored: they contain every
+// address, and the driver reaches a public endpoint inside them by skipping
+// its own interface, which is normal.
+func EndpointInside(ep netip.Addr, allowed []netip.Prefix) bool {
+	ep = ep.Unmap()
+	return slices.ContainsFunc(allowed, func(r netip.Prefix) bool { return r.Bits() > 1 && r.Contains(ep) })
+}

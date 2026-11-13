@@ -94,15 +94,40 @@ func TestDialerLookupFailsWithNothingRemembered(t *testing.T) {
 	}
 }
 
-func TestDialerSuccessRefreshesMemory(t *testing.T) {
+// The first address reached is kept: later dials may run while the tunnel
+// is up, when the server's DNS can answer with an address inside it.
+func TestDialerKeepsFirstAddress(t *testing.T) {
+	n := &fakeNet{ip: "192.0.2.10"}
+	d := newRememberingDialer(n.dial)
+	if got, err := dialTo(t, d, "hifaz.example.com:443"); err != nil || got != "192.0.2.10:443" {
+		t.Fatalf("first dial %q %v", got, err)
+	}
+	n.set("10.98.0.1") // the tunnel's DNS answers privately
+	if got, err := dialTo(t, d, "hifaz.example.com:443"); err != nil || got != "10.98.0.1:443" {
+		t.Fatalf("dial while connected %q %v", got, err)
+	}
+	n.set("")
+	got, err := dialTo(t, d, "hifaz.example.com:443")
+	if err != nil || got != "192.0.2.10:443" || n.lastDial() != "192.0.2.10:443" {
+		t.Fatalf("after a failed lookup: %q %v, dialed %s", got, err, n.lastDial())
+	}
+}
+
+func TestDialerEachPortKeepsItsOwnFirstAddress(t *testing.T) {
 	n := &fakeNet{ip: "192.0.2.10"}
 	d := newRememberingDialer(n.dial)
 	dialTo(t, d, "hifaz.example.com:443")
-	n.set("192.0.2.11") // the server moved
+	n.set("192.0.2.11")
+	dialTo(t, d, "hifaz.example.com:8443")
+	n.set("10.98.0.1")
 	dialTo(t, d, "hifaz.example.com:443")
+	dialTo(t, d, "hifaz.example.com:8443")
 	n.set("")
-	if got, err := dialTo(t, d, "hifaz.example.com:443"); err != nil || got != "192.0.2.11:443" {
-		t.Fatalf("%q %v", got, err)
+	if got, err := dialTo(t, d, "hifaz.example.com:443"); err != nil || got != "192.0.2.10:443" {
+		t.Fatalf("port 443: %q %v", got, err)
+	}
+	if got, err := dialTo(t, d, "hifaz.example.com:8443"); err != nil || got != "192.0.2.11:8443" {
+		t.Fatalf("port 8443: %q %v", got, err)
 	}
 }
 
