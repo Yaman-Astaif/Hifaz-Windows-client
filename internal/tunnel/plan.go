@@ -78,17 +78,41 @@ func NewPlan(cfg *protocol.TunnelConfig) *Plan {
 	return p
 }
 
-// EndpointInside reports whether the endpoint address ep is inside one of
-// the narrower routes the server sends. The driver never sends the tunnel's
-// encrypted packets into its own interface, so an endpoint that can only be
-// reached through the tunnel would stop the tunnel working. The server's
-// DNS, which answers every lookup while connected, may give such a private
-// address for a public name.
+// cgnat is the shared address space (RFC 6598), used for private networks.
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// nonPublic reports whether a is a private, CGNAT, unique-local or
+// link-local address. Everything else counts as public.
+func nonPublic(a netip.Addr) bool {
+	if a.Is4() {
+		return a.IsPrivate() || cgnat.Contains(a) || a.IsLinkLocalUnicast()
+	}
+	return a.IsPrivate() || a.IsLinkLocalUnicast()
+}
+
+// RefuseEndpoint reports whether Reconfigure should keep the current
+// endpoint instead of ep, which a lookup of host returned.
 //
-// Full-tunnel cover routes (/0 and /1) are ignored: they contain every
-// address, and the driver reaches a public endpoint inside them by skipping
-// its own interface, which is normal.
-func EndpointInside(ep netip.Addr, allowed []netip.Prefix) bool {
+// The driver never sends the tunnel's encrypted packets into its own
+// interface, so an endpoint reachable only through the tunnel would stop the
+// tunnel working. The server's DNS answers every lookup while connected. An
+// answer that is a private, CGNAT, unique-local or link-local address inside
+// the narrower routes is assumed to be a private answer from the server's
+// DNS, reachable only through the tunnel, and is refused. Not refused: a
+// literal address (no lookup was made), a public address, and any address
+// when the routes cover its whole family (a full tunnel, however split),
+// where the driver reaches the endpoint by skipping its own interface.
+func RefuseEndpoint(host string, ep netip.Addr, allowed []netip.Prefix) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
 	ep = ep.Unmap()
-	return slices.ContainsFunc(allowed, func(r netip.Prefix) bool { return r.Bits() > 1 && r.Contains(ep) })
+	if !nonPublic(ep) {
+		return false
+	}
+	v4, v6 := policy.FullTunnel(allowed)
+	if (ep.Is4() && v4) || (ep.Is6() && v6) {
+		return false
+	}
+	return slices.ContainsFunc(allowed, func(r netip.Prefix) bool { return r.Contains(ep) })
 }
