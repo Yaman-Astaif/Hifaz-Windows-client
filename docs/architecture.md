@@ -36,7 +36,8 @@
 | A user creating a fake pipe to steal keys | The app checks the pipe belongs to SYSTEM before sending anything. Users cannot add instances to the real pipe (no FILE_CREATE_PIPE_INSTANCE). The service creates it with FILE_FLAG_FIRST_PIPE_INSTANCE. |
 | The service acting as the app's user | The app connects at identification level: the service can see who it is, not act as them. |
 | Remote access to the pipe | Remote clients rejected; network logons denied. |
-| A server routing all traffic without the administrator's consent | Full tunnels (however split) are refused unless the policy allows them. |
+| A server routing all traffic without the administrator's consent | Full tunnels (however split) are refused unless the policy allows them. This covers routes only: while connected, all DNS goes to the server's DNS even when full tunnels are not allowed (see Limits). |
+| A dead tunnel leaving the machine without DNS | The app's HTTP client remembers the address it last reached for the server and connects to it when the name no longer resolves, so it still learns the session has ended; the tunnel then closes and its DNS goes with it. |
 | Planting files where the service writes | Service data is in `Program Files\Hifaz\Data` (users cannot create anything there beforehand), with a protected ACL; links are refused. |
 | Uninstall deleting the wrong folder | Per-user folders that are links are removed as links only. |
 | Script injection in the window | The page sets text only, never HTML; strict CSP; no external content; dev tools, context menu and password autosave off. |
@@ -48,6 +49,17 @@ Limits, stated plainly:
 - A local user can enroll with a server of their choosing; the policy's
   server list is how an administrator prevents that.
 - Up to 64 connections to the service at once, not per user.
+- While connected, every name the machine looks up goes to the server's
+  DNS: the server sees all of them and can answer any name with any
+  address. This is so for every enrolled server while it is the one
+  connected, and even where the policy
+  does not allow full tunnels. HTTPS is still protected by certificates
+  (a wrong address fails the certificate check); plain HTTP is not. The
+  machine policy cannot yet keep the old split DNS (only the server's own
+  domains sent to it).
+- While Hifaz is connected, another VPN that relies on its adapter's DNS
+  without an NRPT rule of its own loses its private names; another VPN's
+  more specific NRPT rules still win. This ends when Hifaz disconnects.
 
 ## Session lifecycle
 
@@ -82,11 +94,17 @@ Limits, stated plainly:
   adapters. The driver skips its own interface when it routes to the
   server, so no extra host route is needed.
 - Routes only for `allowed_ips`.
-- DNS: split tunnel uses one NRPT rule (fixed key) for the server's search
-  domains only; the interface gets no DNS servers. Full tunnel sets the
-  interface DNS and a rule for all names. If Group Policy sets NRPT rules,
-  Windows ignores local ones; the service logs it rather than writing into
-  the policy area.
+- DNS: when the server sends DNS servers, split and full tunnels alike set
+  them on the interface (with the search domains) and add one NRPT rule
+  (fixed key) for all names (`.`). So while connected every lookup goes to
+  Hifaz DNS, as with the WireGuard app's `DNS =` line: Hifaz DNS can give a
+  private answer for a name outside its zone, and in strict DNS mode it is
+  the only DNS the user may use. Routes stay split. A DNS server outside
+  `allowed_ips` is still applied (its queries leave by the normal network)
+  and the service logs it. The rule and interface DNS go when the tunnel
+  goes down, and the DNS cache is flushed, so the user's own DNS works again
+  at once. If Group Policy sets NRPT rules, Windows ignores local ones; the
+  service logs it rather than writing into the policy area.
 - No firewall rules, no kill switch, no keepalive (sessions must be able to
   go idle).
 - Uninstall removes the adapter, the rule, the driver if no other program

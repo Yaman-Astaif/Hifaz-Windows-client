@@ -52,7 +52,9 @@ type Client struct {
 // newer with the system's trust store, and no redirects (the API never
 // redirects, and following one could leave the pinned server). proxy picks
 // a proxy per request; nil means none. cert, if set, is the device
-// certificate, presented when the server's proxy asks for one.
+// certificate, presented when the server's proxy asks for one. When a name
+// lookup fails, it connects to the address it last reached for that host
+// (see rememberingDialer).
 func NewHTTPClient(proxy func(*http.Request) (*url.URL, error), cert *tls.Certificate) *http.Client {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	tc := &tls.Config{MinVersion: tls.VersionTLS12}
@@ -62,7 +64,7 @@ func NewHTTPClient(proxy func(*http.Request) (*url.URL, error), cert *tls.Certif
 	return &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 proxy,
-			DialContext:           dialer.DialContext,
+			DialContext:           newRememberingDialer(dialer.DialContext).DialContext,
 			TLSClientConfig:       tc,
 			TLSHandshakeTimeout:   15 * time.Second,
 			ExpectContinueTimeout: time.Second,
