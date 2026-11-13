@@ -109,3 +109,41 @@ func TestDNSOutsideTunnel(t *testing.T) {
 		})
 	}
 }
+
+func TestEndpointInside(t *testing.T) {
+	prefixes := func(s ...string) []netip.Prefix {
+		var p []netip.Prefix
+		for _, x := range s {
+			p = append(p, netip.MustParsePrefix(x))
+		}
+		return p
+	}
+	for _, tc := range []struct {
+		name    string
+		ep      string
+		allowed []netip.Prefix
+		want    bool
+	}{
+		{"IPv4 inside", "10.98.0.1", prefixes("10.98.0.0/16"), true},
+		{"IPv4 outside", "192.0.2.10", prefixes("10.98.0.0/16", "fd00::/64"), false},
+		{"IPv6 inside", "fd00::1", prefixes("10.98.0.0/16", "fd00::/64"), true},
+		{"IPv6 outside", "2001:db8::1", prefixes("fd00::/64"), false},
+		{"IPv4-mapped inside", "::ffff:10.98.0.1", prefixes("10.98.0.0/16"), true},
+		{"IPv4-mapped outside", "::ffff:192.0.2.10", prefixes("10.98.0.0/16"), false},
+		{"no routes", "10.98.0.1", nil, false},
+		{"full tunnel, public address", "192.0.2.10", prefixes("0.0.0.0/0"), false},
+		{"full tunnel as /1 pair, public address", "192.0.2.10", prefixes("0.0.0.0/1", "128.0.0.0/1"), false},
+		{"full tunnel and a range, inside the range", "10.98.0.1", prefixes("0.0.0.0/0", "10.98.0.0/16"), true},
+		{"/1 pair and a range, inside the range", "10.98.0.1", prefixes("0.0.0.0/1", "128.0.0.0/1", "10.98.0.0/16"), true},
+		{"full IPv6 tunnel, public address", "2001:db8::1", prefixes("::/0"), false},
+		{"IPv6 /1 pair, public address", "2001:db8::1", prefixes("::/1", "8000::/1"), false},
+		{"full IPv6 tunnel and a range, inside the range", "fd00::1", prefixes("::/0", "fd00::/64"), true},
+		{"IPv6 /1 pair and a range, inside the range", "fd00::1", prefixes("::/1", "8000::/1", "fd00::/64"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EndpointInside(netip.MustParseAddr(tc.ep), tc.allowed); got != tc.want {
+				t.Fatalf("EndpointInside(%s, %v) = %v", tc.ep, tc.allowed, got)
+			}
+		})
+	}
+}

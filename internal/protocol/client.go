@@ -53,7 +53,7 @@ type Client struct {
 // redirects, and following one could leave the pinned server). proxy picks
 // a proxy per request; nil means none. cert, if set, is the device
 // certificate, presented when the server's proxy asks for one. When a name
-// lookup fails, it connects to the address it last reached for that host
+// lookup fails, it connects to the address it first reached for that host
 // (see rememberingDialer).
 func NewHTTPClient(proxy func(*http.Request) (*url.URL, error), cert *tls.Certificate) *http.Client {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}

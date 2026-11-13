@@ -32,9 +32,14 @@ type fakeTunnel struct {
 	cfg         *protocol.TunnelConfig
 	psk         protocol.Key
 	reconfigure int
+	// onUp, when set, runs at the start of Up.
+	onUp func()
 }
 
 func (f *fakeTunnel) Up(cfg *protocol.TunnelConfig, _, psk protocol.Key) error {
+	if f.onUp != nil {
+		f.onUp()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.up, f.cfg, f.psk = true, cfg, psk
@@ -178,6 +183,9 @@ type harness struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	// clients counts the HTTP clients the app has asked for.
+	clients atomic.Int64
+
 	dropMu sync.Mutex
 	// drop, when set, is asked about every request after the server has
 	// answered it: true loses the answer, as a broken connection would.
@@ -192,6 +200,7 @@ func (h *harness) setDrop(f func(*http.Request) bool) {
 
 // httpClient is the server's client, with answers lost where drop says.
 func (h *harness) httpClient(cert *tls.Certificate) *http.Client {
+	h.clients.Add(1)
 	hc := h.srv.HTTPClientWith(cert)
 	hc.Transport = dropTransport{base: hc.Transport, h: h}
 	return hc
@@ -386,6 +395,28 @@ func TestFollowServiceRefused(t *testing.T) {
 	v := h.waitErrorView()
 	if v.Screen != ScreenSignIn || v.Error.Code != ErrServiceRefused {
 		t.Fatalf("view %s, error %q", v.Screen, v.Error.Code)
+	}
+}
+
+// Each sign-in builds its own HTTP client before the tunnel comes up, so the
+// client's remembered server address is never one learned through the
+// tunnel's DNS (see protocol.rememberingDialer).
+func TestEachSignInUsesNewHTTPClient(t *testing.T) {
+	h := newHarness(t)
+	var ups []int64
+	h.tun.onUp = func() { ups = append(ups, h.clients.Load()) }
+	h.enroll()
+	before := h.clients.Load()
+	h.signIn()
+	h.ctrl.Do(Action{Name: "disconnect"})
+	h.wait(ScreenSignIn)
+	between := h.clients.Load()
+	h.signIn()
+	if len(ups) != 2 {
+		t.Fatalf("%d tunnels brought up", len(ups))
+	}
+	if ups[0] <= before || ups[1] <= between {
+		t.Fatalf("clients at each Up %v, before the sign-ins %d and %d", ups, before, between)
 	}
 }
 

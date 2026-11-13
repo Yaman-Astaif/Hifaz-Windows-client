@@ -9,15 +9,19 @@ import (
 )
 
 // rememberingDialer dials by host name and remembers, per host and port,
-// the address the last connection went to. When a later name lookup fails,
-// it dials that address instead.
+// the first address it reached. When a later name lookup fails, it dials
+// that address instead.
 //
 // While a tunnel is up, all DNS goes to the server's DNS through the tunnel.
 // If the server has dropped the peer (the computer slept past the idle or
 // time limit), no name resolves any more, and without this the app could
 // never ask the server that the session has ended, so the tunnel and its
-// DNS would stay. The address was learned before the tunnel came up (at
-// enrollment or sign-in).
+// DNS would stay.
+//
+// Only the first address is kept. A client is built for each sign-in and
+// its first dial is made before the tunnel is up, so an answer from the
+// server's DNS (which may be a private address inside the tunnel) is never
+// remembered. Callers must not reuse a client across sign-ins.
 //
 // Only the TCP target changes: TLS still checks the certificate for the
 // host name and sends it as SNI, as the transport takes both from the
@@ -26,7 +30,7 @@ type rememberingDialer struct {
 	dial func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	mu   sync.Mutex
-	last map[string]netip.Addr // "host:port" -> address last connected to
+	last map[string]netip.Addr // "host:port" -> first address reached
 }
 
 func newRememberingDialer(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *rememberingDialer {
@@ -46,7 +50,9 @@ func (d *rememberingDialer) DialContext(ctx context.Context, network, addr strin
 	if err == nil {
 		if ap, perr := netip.ParseAddrPort(conn.RemoteAddr().String()); perr == nil {
 			d.mu.Lock()
-			d.last[addr] = ap.Addr().Unmap()
+			if _, ok := d.last[addr]; !ok {
+				d.last[addr] = ap.Addr().Unmap()
+			}
 			d.mu.Unlock()
 		}
 		return conn, nil
