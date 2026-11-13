@@ -283,13 +283,14 @@ func (t *Tunnel) Reconfigure(cfg *protocol.TunnelConfig) error {
 		if err != nil {
 			return err
 		}
-		if EndpointInside(endpoint.Addr(), cfg.AllowedIPs) {
-			// The server's DNS gave an address only reachable through the
-			// tunnel; the driver does not send the encrypted packets into
-			// its own interface, so the tunnel would stop working. t.host
-			// stays, so the next configuration tries again.
-			t.log("new endpoint resolves inside the tunnel; keeping the current one", "host", cfg.EndpointHost,
-				"address", endpoint.Addr(), "reason", "only reachable through the tunnel itself")
+		if RefuseEndpoint(cfg.EndpointHost, endpoint.Addr(), cfg.AllowedIPs) {
+			// The server's DNS gave a private address inside the narrower
+			// routes, assumed reachable only through the tunnel; the driver
+			// does not send the encrypted packets into its own interface,
+			// so the tunnel would stop working. t.host stays, so the next
+			// configuration tries again.
+			t.log("new endpoint resolves to a private address inside the tunnel's routes; keeping the current one", "host", cfg.EndpointHost,
+				"address", endpoint.Addr(), "reason", "assumed to be an answer from the server's DNS that is reachable only through the tunnel")
 		} else {
 			t.endpoint, t.host = endpoint, cfg.EndpointHost
 		}

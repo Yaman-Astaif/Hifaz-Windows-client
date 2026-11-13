@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"fmt"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -110,7 +111,7 @@ func TestDNSOutsideTunnel(t *testing.T) {
 	}
 }
 
-func TestEndpointInside(t *testing.T) {
+func TestRefuseEndpoint(t *testing.T) {
 	prefixes := func(s ...string) []netip.Prefix {
 		var p []netip.Prefix
 		for _, x := range s {
@@ -118,31 +119,49 @@ func TestEndpointInside(t *testing.T) {
 		}
 		return p
 	}
+	var slash8 []string
+	for i := 0; i < 256; i++ {
+		slash8 = append(slash8, fmt.Sprintf("%d.0.0.0/8", i))
+	}
+	const host = "vpn.example.org"
 	for _, tc := range []struct {
 		name    string
+		host    string
 		ep      string
 		allowed []netip.Prefix
 		want    bool
 	}{
-		{"IPv4 inside", "10.98.0.1", prefixes("10.98.0.0/16"), true},
-		{"IPv4 outside", "192.0.2.10", prefixes("10.98.0.0/16", "fd00::/64"), false},
-		{"IPv6 inside", "fd00::1", prefixes("10.98.0.0/16", "fd00::/64"), true},
-		{"IPv6 outside", "2001:db8::1", prefixes("fd00::/64"), false},
-		{"IPv4-mapped inside", "::ffff:10.98.0.1", prefixes("10.98.0.0/16"), true},
-		{"IPv4-mapped outside", "::ffff:192.0.2.10", prefixes("10.98.0.0/16"), false},
-		{"no routes", "10.98.0.1", nil, false},
-		{"full tunnel, public address", "192.0.2.10", prefixes("0.0.0.0/0"), false},
-		{"full tunnel as /1 pair, public address", "192.0.2.10", prefixes("0.0.0.0/1", "128.0.0.0/1"), false},
-		{"full tunnel and a range, inside the range", "10.98.0.1", prefixes("0.0.0.0/0", "10.98.0.0/16"), true},
-		{"/1 pair and a range, inside the range", "10.98.0.1", prefixes("0.0.0.0/1", "128.0.0.0/1", "10.98.0.0/16"), true},
-		{"full IPv6 tunnel, public address", "2001:db8::1", prefixes("::/0"), false},
-		{"IPv6 /1 pair, public address", "2001:db8::1", prefixes("::/1", "8000::/1"), false},
-		{"full IPv6 tunnel and a range, inside the range", "fd00::1", prefixes("::/0", "fd00::/64"), true},
-		{"IPv6 /1 pair and a range, inside the range", "fd00::1", prefixes("::/1", "8000::/1", "fd00::/64"), true},
+		{"private 10/8 in range", host, "10.98.0.1", prefixes("10.98.0.0/16"), true},
+		{"private 172.16/12", host, "172.16.5.5", prefixes("172.16.0.0/12"), true},
+		{"private 192.168/16", host, "192.168.1.5", prefixes("192.168.0.0/16"), true},
+		{"CGNAT", host, "100.64.1.1", prefixes("100.64.0.0/10"), true},
+		{"link-local v4", host, "169.254.1.1", prefixes("169.254.0.0/16"), true},
+		{"unique-local v6", host, "fd00::1", prefixes("fd00::/64"), true},
+		{"link-local v6", host, "fe80::1", prefixes("fe80::/10"), true},
+		{"v4-mapped private", host, "::ffff:10.98.0.1", prefixes("10.98.0.0/16"), true},
+		{"three /2 with a gap", host, "10.98.0.1", prefixes("0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2"), true},
+		{"v4 full, v6 narrow, v6 endpoint", host, "fd00::1", prefixes("0.0.0.0/0", "fd00::/64"), true},
+
+		{"public v4", host, "198.51.100.7", prefixes("198.51.100.0/24"), false},
+		{"public v6", host, "2001:db8::1", prefixes("2001:db8::/32"), false},
+		{"v4-mapped public", host, "::ffff:198.51.100.7", prefixes("198.51.100.0/24"), false},
+		{"just above CGNAT", host, "100.128.0.1", prefixes("100.0.0.0/8"), false},
+		{"private but outside routes", host, "192.168.1.5", prefixes("10.98.0.0/16"), false},
+		{"v4 endpoint, v6 routes only", host, "10.98.0.1", prefixes("fd00::/64"), false},
+		{"no routes", host, "10.98.0.1", nil, false},
+		{"full v4 /0", host, "10.98.0.1", prefixes("0.0.0.0/0", "10.98.0.0/16"), false},
+		{"full v4 /1 pair", host, "10.98.0.1", prefixes("0.0.0.0/1", "128.0.0.0/1", "10.98.0.0/16"), false},
+		{"full v4 four /2", host, "10.98.0.1", prefixes("0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2", "192.0.0.0/2", "10.98.0.0/16"), false},
+		{"full v4 256 /8", host, "10.98.0.1", prefixes(append(slash8, "10.98.0.0/16")...), false},
+		{"full v6 /0", host, "fd00::1", prefixes("::/0", "fd00::/64"), false},
+		{"full v6 /1 pair", host, "fd00::1", prefixes("::/1", "8000::/1", "fd00::/64"), false},
+		{"full v6 four /2", host, "fd00::1", prefixes("::/2", "4000::/2", "8000::/2", "c000::/2", "fd00::/64"), false},
+		{"literal v4 host", "10.98.0.1", "10.98.0.1", prefixes("10.98.0.0/16"), false},
+		{"literal v6 host", "fd00::1", "fd00::1", prefixes("fd00::/64"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := EndpointInside(netip.MustParseAddr(tc.ep), tc.allowed); got != tc.want {
-				t.Fatalf("EndpointInside(%s, %v) = %v", tc.ep, tc.allowed, got)
+			if got := RefuseEndpoint(tc.host, netip.MustParseAddr(tc.ep), tc.allowed); got != tc.want {
+				t.Fatalf("RefuseEndpoint(%s, %s) = %v", tc.host, tc.ep, got)
 			}
 		})
 	}
