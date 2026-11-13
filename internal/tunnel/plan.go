@@ -22,16 +22,23 @@ type Plan struct {
 	// Full4/Full6: all traffic of that family goes through the tunnel (only
 	// when the policy allows it).
 	Full4, Full6 bool
-	// DNS on the tunnel interface itself. Set only for a full tunnel; for a
-	// split tunnel the interface has no DNS servers, so Windows keeps using
-	// the user's own for everything else.
+	// DNS on the tunnel interface: the server's DNS servers, for split and
+	// full tunnels alike. While connected, every name goes to them, as with
+	// the WireGuard app's "DNS =" line: the server's DNS may give a private
+	// answer for a name outside its own zone (and in Hifaz's strict DNS
+	// mode it is the only DNS the user may use). Routes stay as the server
+	// sent them; only DNS is sent to the tunnel.
 	InterfaceDNS []netip.Addr
 	// Search domains on the tunnel interface, so short names resolve.
 	SearchDomains []string
 	// Name resolution rule (NRPT): names under Namespaces are resolved by
-	// Servers. For a split tunnel these are the search domains; for a full
-	// tunnel the root ("."), so no name is sent elsewhere.
+	// Servers. Always the root ("."), so no name is sent elsewhere while
+	// connected; removed again when the tunnel goes down.
 	Rule *Rule
+	// DNS servers not inside any of the tunnel's routes: queries to them
+	// leave by the normal network. Applied anyway (as WireGuard does), but
+	// worth a line in the log.
+	DNSOutsideTunnel []netip.Addr
 }
 
 // Rule is one NRPT rule.
@@ -61,16 +68,12 @@ func NewPlan(cfg *protocol.TunnelConfig) *Plan {
 		return p
 	}
 	servers := slices.Clone(cfg.DNSServers)
-	switch {
-	case p.Full4 || p.Full6:
-		p.InterfaceDNS = servers
-		p.Rule = &Rule{Namespaces: []string{"."}, Servers: servers}
-	case len(cfg.SearchDomains) > 0:
-		rule := &Rule{Servers: servers}
-		for _, d := range cfg.SearchDomains {
-			rule.Namespaces = append(rule.Namespaces, "."+d)
+	p.InterfaceDNS = servers
+	p.Rule = &Rule{Namespaces: []string{"."}, Servers: servers}
+	for _, a := range servers {
+		if !slices.ContainsFunc(cfg.AllowedIPs, func(r netip.Prefix) bool { return r.Contains(a) }) {
+			p.DNSOutsideTunnel = append(p.DNSOutsideTunnel, a)
 		}
-		p.Rule = rule
 	}
 	return p
 }

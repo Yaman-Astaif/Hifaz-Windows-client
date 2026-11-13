@@ -43,9 +43,14 @@ func TestTunnelUpDown(t *testing.T) {
 		t.Fatalf("DNS rule not written: %v", err)
 	}
 	names, _, _ := k.GetStringsValue("Name")
+	servers, _, _ := k.GetStringValue("GenericDNSServers")
 	k.Close()
-	if len(names) != 1 || names[0] != ".hifaz-test.invalid" {
+	// All names go to the tunnel's DNS while connected.
+	if len(names) != 1 || names[0] != "." {
 		t.Fatalf("DNS rule names %v", names)
+	}
+	if servers != "10.255.0.1" {
+		t.Fatalf("DNS rule servers %q", servers)
 	}
 	if _, err := tun.Stats(); err != nil {
 		t.Fatal(err)
@@ -54,6 +59,24 @@ func TestTunnelUpDown(t *testing.T) {
 	// A newer configuration with another route.
 	c.Version, c.AllowedIPs = 2, []string{"10.255.0.0/16", "10.254.0.0/16"}
 	cfg2, _ := c.Parse()
+	if err := tun.Reconfigure(cfg2); err != nil {
+		t.Fatal(err)
+	}
+
+	// A configuration without DNS servers removes the rule; the next one
+	// with DNS brings it back.
+	noDNS := *c
+	noDNS.Version, noDNS.DNS = 3, protocol.DNS{}
+	cfg3, err := noDNS.Parse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tun.Reconfigure(cfg3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.OpenKey(registry.LOCAL_MACHINE, nrptLocal+`\`+nrptRuleKey, registry.QUERY_VALUE); !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		t.Fatalf("DNS rule kept without DNS servers: %v", err)
+	}
 	if err := tun.Reconfigure(cfg2); err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,9 @@ Enrollment
 - [ ] The device card on the dashboard shows method `app`, platform, app version, OS.
 
 Sign-in and session
-- [ ] Sign in with password, then OTP. Tunnel up; only the group's ranges routed (`route print`); names in the search domain resolve through Hifaz DNS (`Resolve-DnsName`), other names unchanged.
+- [ ] Sign in with password, then OTP. Tunnel up; only the group's ranges routed (`route print`); `Get-DnsClientNrptPolicy` shows one rule with Namespace `.` and the Hifaz DNS server; names in the search domain and a private name outside the zone (`hifaz dns add app.example.com. ...`) resolve through Hifaz DNS (`Resolve-DnsName`). While connected Hifaz DNS sees all lookups, as with the WireGuard app.
+- [ ] Sign out: the rule is gone and `Resolve-DnsName www.example.com` works through the normal DNS; another VPN connected at the same time keeps working.
+- [ ] Sign in, then sleep the computer past the idle timeout (or the time limit) and resume: the app notices the session has ended, the tunnel closes, and normal DNS works (`Resolve-DnsName www.example.com`, no Hifaz rule in `Get-DnsClientNrptPolicy`).
 - [ ] Change the group's ranges on the dashboard: applied within seconds, no reconnect.
 - [ ] Idle timeout, time limit, admin ends the session, admin disables the device: the tunnel closes and the window says why.
 - [ ] After each of those, sign in again: traffic flows within about a second (a new handshake at once, no 10–15 second wait).

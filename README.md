@@ -35,7 +35,7 @@ internal/protocol/      client protocol v1: keys, signatures, sealed PSK, HTTP c
 internal/app/           app logic: enrollment, sign-in, session, key renewal
 internal/daemon/        service logic: nonces, server identities, policy, tunnel owner
 internal/ipc/           app <-> service messages, the named pipe
-internal/tunnel/        WireGuardNT adapter, routes, MTU, split DNS (NRPT)
+internal/tunnel/        WireGuardNT adapter, routes, MTU, DNS (interface and NRPT)
 internal/policy/        machine policy (allowed servers, full tunnel)
 internal/keystore/      the user's enrolled servers, keys sealed with DPAPI
 internal/winui/         window (WebView2), tray, preferences
@@ -123,8 +123,17 @@ An entry that cannot be read makes the service allow no server.
 - Our own app and tunnel on the official WireGuardNT components, not
   driving the WireGuard app. The WireGuard app and other VPNs keep working
   side by side: Hifaz has its own adapter, routes only the ranges the server
-  sends, adds DNS rules only for the server's domains, and sets no firewall
-  rules.
+  sends, and sets no firewall rules. While connected, all DNS lookups go to
+  the server's DNS (one NRPT rule for all names, removed on disconnect), as
+  with the WireGuard app's `DNS =`, so Hifaz DNS can answer private names
+  outside its zone. Plainly: while connected, the server (any enrolled
+  server, when it is the one connected) sees every name the machine looks up and can answer any name with any address,
+  even where the policy does not allow full tunnels. HTTPS is still
+  protected by certificates; plain HTTP is not. The machine policy cannot
+  yet keep the old split DNS (only the server's domains). Another VPN that
+  relies on its adapter's DNS without its own NRPT rule loses its private
+  names while Hifaz is connected (its more specific NRPT rules still win);
+  this ends when Hifaz disconnects.
 - Device key and WireGuard key are made on the device and sealed with
   DPAPI for the current user (no admin rights). A TPM-backed key is a later
   step.

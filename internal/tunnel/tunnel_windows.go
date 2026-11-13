@@ -246,7 +246,10 @@ func (t *Tunnel) configureDNS(plan *Plan) error {
 		return removeRule()
 	}
 	if GroupPolicyNRPT() {
-		t.log("Group Policy sets DNS name rules, so Windows ignores Hifaz's rule; names in the tunnel's domains may not resolve")
+		t.log("Group Policy sets DNS name rules, so Windows ignores Hifaz's rule; names may not resolve through Hifaz DNS")
+	}
+	if len(plan.DNSOutsideTunnel) > 0 {
+		t.log("DNS server is outside the tunnel's routes; while connected every name lookup goes to it, so if it cannot be reached outside the tunnel, names will not resolve", "servers", plan.DNSOutsideTunnel)
 	}
 	if err := setRule(plan.Rule); err != nil {
 		return fmt.Errorf("setting the DNS rule: %w", err)
@@ -303,6 +306,13 @@ func (t *Tunnel) Down() error {
 func (t *Tunnel) downLocked() error {
 	err := removeRule()
 	if t.adapter != nil {
+		// Clear the interface DNS first, so nothing of it stays in the
+		// registry. IPv6 may be off on the machine: its error is ignored.
+		for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+			if derr := t.luid.SetDNS(family, nil, nil); derr != nil && family == windows.AF_INET && err == nil {
+				err = fmt.Errorf("clearing DNS: %w", derr)
+			}
+		}
 		// Closing the adapter removes it, with its address and routes.
 		if cerr := t.adapter.Close(); err == nil {
 			err = cerr
