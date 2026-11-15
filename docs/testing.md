@@ -65,7 +65,7 @@ Coexistence
 Alongside the WireGuard app
 - [ ] A WireGuard app tunnel with `0.0.0.0/0, ::/0` and "Block untunneled traffic" **on**: sign in to Hifaz. Within about 10 seconds the app shows "Signed in, but the Hifaz server doesn't answer" and the warning naming that tunnel (English and Arabic, right-to-left); the tray tip says the server doesn't answer. Normal DNS keeps working through the other tunnel (`Resolve-DnsName www.example.com`); `Get-DnsClientNrptPolicy` has no Hifaz rule. Sign out: nothing of Hifaz is left; the other tunnel is untouched.
 - [ ] The same tunnel with "Block untunneled traffic" **off**: Hifaz connects, DNS goes to Hifaz DNS, its networks are reachable.
-- [ ] No other VPN, the server's UDP port blocked (on the server or a test firewall): the general "doesn't answer" text, normal DNS, no Hifaz rule. Unblock it: Connected within about 10 seconds, the Hifaz rule appears.
+- [ ] No other VPN, the server's UDP port blocked (on the server or a test firewall): the general "doesn't answer" text, normal DNS, no Hifaz rule. Unblock it within 90 seconds of sign-in: Connected within about 10 seconds, the Hifaz rule appears. Leave it blocked for more than 90 seconds: the service stops probing (check the service log); unblock it and reach an address in Hifaz's routes (`ping`): Connected, the Hifaz rule appears.
 - [ ] Connected and idle for more than 5 minutes: still Connected, no traffic counted by the server (idle timeout works as before).
 - [ ] Another VPN (OpenVPN or the system VPN): both work.
 - [ ] Sleep and wake, Wi-Fi change: the session continues or ends cleanly.

@@ -16,6 +16,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -76,6 +77,9 @@ type Engine struct {
 	// findBlocker looks for what keeps the server from answering; nil
 	// where it cannot be told.
 	findBlocker func() (*ipc.Blocker, error)
+	// blockerErr is the last lookup error logged; only Run's goroutine
+	// (checkLink) uses it.
+	blockerErr string
 
 	mu       sync.Mutex
 	nonces   map[string][]issuedNonce // SID -> nonces, oldest first
@@ -357,7 +361,7 @@ func (e *Engine) connect(conn uint64, c Caller, req *ipc.Request) *ipc.Response 
 	delete(e.lastErrs, c.SID)
 	e.setStateLocked(ipc.StateConnected)
 	e.log("tunnel up; waiting for the server to answer", "sid", c.SID, "server", server, "config", cfg.Version)
-	e.probeLocked()
+	e.probeLocked(e.owner.link)
 	return &ipc.Response{Status: e.statusLocked(c)}
 }
 
@@ -390,7 +394,7 @@ func (e *Engine) update(conn uint64, c Caller, req *ipc.Request) *ipc.Response {
 			// A new peer has no handshake yet: wait for it again.
 			e.owner.link.wait(e.now())
 			e.log("new server key; waiting for the server to answer")
-			e.probeLocked()
+			e.probeLocked(e.owner.link)
 		}
 		e.bumpLocked()
 	}
@@ -522,9 +526,12 @@ func (e *Engine) checkLink() {
 	a := o.link.step(st, e.now())
 	if a.dnsOff {
 		if err := e.tunnel.SetDNS(false); err != nil {
-			e.log("removing DNS failed; trying again", "err", err)
+			if err.Error() != o.link.dnsErr { // once per error, not every second
+				o.link.dnsErr = err.Error()
+				e.log("removing DNS failed; trying again", "err", err)
+			}
 		} else {
-			o.link.dnsOn = false
+			o.link.dnsOn, o.link.dnsErr = false, ""
 		}
 	}
 	if a.dnsOn {
@@ -537,7 +544,7 @@ func (e *Engine) checkLink() {
 		o.link.dnsOn = true
 	}
 	if a.probe {
-		e.probeLocked()
+		e.probeLocked(o.link)
 	}
 	if a.changed {
 		e.bumpLocked()
@@ -550,10 +557,15 @@ func (e *Engine) checkLink() {
 	}
 
 	// Outside the lock: reading the firewall state may take a moment.
-	b, err := e.findBlocker()
+	b, err := e.lookForBlocker()
 	if err != nil {
-		e.log("looking for what blocks the server failed", "err", err)
+		if err.Error() != e.blockerErr { // once, not every minute
+			e.blockerErr = err.Error()
+			e.log("looking for what blocks the server failed", "err", err)
+		}
 		b = nil
+	} else {
+		e.blockerErr = ""
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -574,8 +586,22 @@ func sameBlocker(a, b *ipc.Blocker) bool {
 	return a.App == b.App && slices.Equal(a.Tunnels, b.Tunnels)
 }
 
-func (e *Engine) probeLocked() {
-	if err := e.tunnel.Probe(); err != nil {
+// lookForBlocker calls findBlocker; a panic in it (it reads the system's
+// firewall state) becomes an error, so the app shows the general text.
+func (e *Engine) lookForBlocker() (b *ipc.Blocker, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			b, err = nil, fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return e.findBlocker()
+}
+
+// probeLocked sends a probe for l, logging a failure only the first time in
+// the probe window or when the error changes.
+func (e *Engine) probeLocked(l *link) {
+	if err := e.tunnel.Probe(); err != nil && err.Error() != l.probeErr {
+		l.probeErr = err.Error()
 		e.log("probe packet not sent", "err", err)
 	}
 }

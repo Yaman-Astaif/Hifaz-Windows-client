@@ -8,9 +8,16 @@ import (
 
 // Whether the server answers through the tunnel, from WireGuard's handshake
 // time and the bytes sent. Nothing is sent to keep the session alive
-// (protocol section 8: the server counts idle time from what it receives):
-// one probe packet goes into the tunnel only at sign-in and while the
-// server does not answer, to start a handshake.
+// (protocol section 8: the server counts idle time from what it receives,
+// handshake initiations included): a probe packet goes into the tunnel, to
+// start a handshake, only for probeWindow after sign-in, after a new server
+// key, or after the link went from up to no answer. After that only the
+// user's own traffic makes WireGuard try again, so a session whose
+// handshake never completes still goes idle on the server.
+//
+// LastHandshake is wall-clock time: a forward clock jump of more than
+// handshakeLost while sending can briefly show no answer, until the next
+// rekey (within about 2 minutes).
 const (
 	linkPoll           = time.Second      // how often Run looks
 	firstAnswerTimeout = 10 * time.Second // after sign-in, before "no answer"
@@ -19,8 +26,11 @@ const (
 	handshakeLost = 3 * time.Minute
 	// Sending with an old handshake: WireGuard handshakes at once. This
 	// long without one, the server does not answer.
-	lostGrace      = 15 * time.Second
-	probeRetry     = 10 * time.Second
+	lostGrace  = 15 * time.Second
+	probeRetry = 10 * time.Second
+	// WireGuard itself gives up retrying a handshake after 90 seconds
+	// (Rekey-Attempt-Time); probing stops then too.
+	probeWindow    = 90 * time.Second
 	blockerRecheck = time.Minute
 )
 
@@ -35,9 +45,13 @@ type link struct {
 	lastTx           uint64
 	sendingSince     time.Time
 	lastProbe        time.Time
+	probeArmed       time.Time // start of the current probe window
 	lastBlockerCheck time.Time
 	dnsOn            bool
 	blocker          *ipc.Blocker
+	// The last errors logged, so a failure repeating every second is
+	// logged once: probeErr per probe window, dnsErr until DNS is removed.
+	probeErr, dnsErr string
 }
 
 // actions are what the engine does after a step.
@@ -52,12 +66,12 @@ type actions struct {
 // newLink starts waiting for the first answer at now; the engine sends the
 // first probe at the same time.
 func newLink(now time.Time) *link {
-	return &link{state: ipc.LinkWaiting, since: now, lastProbe: now}
+	return &link{state: ipc.LinkWaiting, since: now, lastProbe: now, probeArmed: now}
 }
 
 // wait starts waiting again (a new server key resets the handshake).
 func (l *link) wait(now time.Time) {
-	l.state, l.since, l.lastProbe = ipc.LinkWaiting, now, now
+	l.state, l.since, l.lastProbe, l.probeArmed, l.probeErr = ipc.LinkWaiting, now, now, now, ""
 	l.sendingSince, l.blocker = time.Time{}, nil
 }
 
@@ -79,6 +93,7 @@ func (l *link) step(st Stats, now time.Time) actions {
 		}
 		if !l.sendingSince.IsZero() && now.Sub(l.sendingSince) >= lostGrace {
 			l.noAnswer(now, &a)
+			l.probeArmed, l.probeErr = now, "" // a new episode
 		}
 	case ipc.LinkWaiting:
 		if fresh {
@@ -95,7 +110,7 @@ func (l *link) step(st Stats, now time.Time) actions {
 		}
 	}
 
-	if l.state != ipc.LinkUp && now.Sub(l.lastProbe) >= probeRetry {
+	if l.state != ipc.LinkUp && now.Sub(l.probeArmed) < probeWindow && now.Sub(l.lastProbe) >= probeRetry {
 		l.lastProbe = now
 		a.probe = true
 	}

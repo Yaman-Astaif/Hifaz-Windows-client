@@ -105,13 +105,22 @@ and the bytes sent:
 - **No answer**: no handshake within 10 seconds of sign-in, or more than 3
   minutes since the last one while traffic is being sent (plus 15 seconds'
   grace). Hifaz DNS is removed until the server answers again; the tunnel
-  stays, and one probe goes every 10 seconds, only in this state. The app
+  stays. The app
   says "Signed in, but the Hifaz server doesn't answer", and why when it can
   tell: in this state only, at most once a minute, the service reads the
   Windows Filtering Platform (WFP), read-only, for the WireGuard app's kill
   switch: a provider named `WireGuard` with a block-all filter in the
   outbound connection layers; its permit filter for one adapter names the
   tunnel. Anything else, or a failed check, gives the general text.
+
+Probes are bounded: one every 10 seconds, only while waiting or with no
+answer, and only for 90 seconds (`probeWindow`, WireGuard's own limit for
+handshake retries) after sign-in, after a new server key, or after the link
+went from up to no answer. They are never re-armed by a timer. The server
+counts received handshake initiations as activity, so endless probing could
+keep a session whose handshake never completes from going idle (protocol
+section 8). After the window only the user's own traffic makes WireGuard try
+again, and a handshake then still brings Connected and DNS back.
 
 A new server key in a configuration starts waiting again. Idle, the time
 limit, sign-out and the rest end the tunnel as before. A kill switch turned
@@ -139,7 +148,8 @@ the adapter, so the counters cannot show it.
   doesn't answer (see Session lifecycle), so a blocked tunnel never leaves
   the machine without DNS.
 - No firewall rules, no kill switch, no keepalive (sessions must be able to
-  go idle); one probe packet only while the server doesn't answer. Other
+  go idle); probe packets only while the server doesn't answer, and for at
+  most 90 seconds at a time. Other
   programs' firewall rules are only read, to say why the server doesn't
   answer.
 - Uninstall removes the adapter, the rule, the driver if no other program

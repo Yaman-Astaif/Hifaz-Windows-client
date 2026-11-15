@@ -152,8 +152,9 @@ func TestLinkNoAnswerRetries(t *testing.T) {
 	r.l.lastProbe = t0 // the engine probes at sign-in
 	probes, checks := r.until(firstAnswerTimeout + 5*time.Minute)
 	r.want(ipc.LinkNoAnswer, false)
-	// One probe every probeRetry, the blocker every blockerRecheck.
-	wantProbes := int((firstAnswerTimeout + 5*time.Minute) / probeRetry)
+	// One probe every probeRetry within probeWindow of sign-in (the one at
+	// sign-in is the engine's), the blocker every blockerRecheck.
+	wantProbes := int(probeWindow/probeRetry) - 1
 	wantChecks := 1 + int(5*time.Minute/blockerRecheck)
 	if probes != wantProbes || checks != wantChecks {
 		t.Fatalf("%d probes (want %d), %d checks (want %d)", probes, wantProbes, checks, wantChecks)
@@ -189,5 +190,54 @@ func TestLinkRetriesDNS(t *testing.T) {
 	r.st.LastHandshake = time.Time{}
 	if a := r.l.step(r.st, t0.Add(2*time.Second)); !a.dnsOff || a.changed {
 		t.Fatalf("%+v", a)
+	}
+}
+
+func TestLinkProbesStopAfterWindow(t *testing.T) {
+	r := newLinkRun(t)
+	probes, checks := r.until(10 * time.Minute)
+	r.want(ipc.LinkNoAnswer, false)
+	// At 10 s, 20 s, ... 80 s; none from 90 s on. Blocker checks go on.
+	if probes != int(probeWindow/probeRetry)-1 || checks < 9 {
+		t.Fatalf("%d probes, %d checks in 10 minutes", probes, checks)
+	}
+	var last time.Time
+	for r.now.Before(t0.Add(20 * time.Minute)) {
+		if r.tick().probe {
+			last = r.now
+		}
+	}
+	if !last.IsZero() {
+		t.Fatalf("probe at %v", last.Sub(t0))
+	}
+	// A late handshake (the user's own traffic) still brings the link up.
+	r.st.LastHandshake = r.now
+	r.tick()
+	r.want(ipc.LinkUp, true)
+}
+
+func TestLinkProbesRearmWhenLost(t *testing.T) {
+	r := newLinkRun(t)
+	r.st = Stats{LastHandshake: t0, TxBytes: 500}
+	r.tick()
+	r.until(handshakeLost + time.Minute)
+	r.st.TxBytes += 100
+	r.tick()
+	for r.l.state == ipc.LinkUp {
+		if a := r.tick(); r.l.state == ipc.LinkNoAnswer && !a.probe {
+			t.Fatal("no probe at the loss")
+		}
+	}
+	lost := r.now
+	var probes []time.Duration
+	for r.now.Before(lost.Add(10 * time.Minute)) {
+		if r.tick().probe {
+			probes = append(probes, r.now.Sub(lost))
+		}
+	}
+	// The probe at the loss itself came with the transition; then every
+	// probeRetry until probeWindow after it.
+	if len(probes) != int(probeWindow/probeRetry)-1 || probes[0] != probeRetry || probes[len(probes)-1] != probeWindow-probeRetry {
+		t.Fatalf("probes after the loss at %v", probes)
 	}
 }
