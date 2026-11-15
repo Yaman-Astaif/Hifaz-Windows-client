@@ -19,7 +19,6 @@ var (
 	pDefWindowProcW                = user32.NewProc("DefWindowProcW")
 	pDestroyWindow                 = user32.NewProc("DestroyWindow")
 	pShowWindow                    = user32.NewProc("ShowWindow")
-	pIsIconic                      = user32.NewProc("IsIconic")
 	pIsWindowVisible               = user32.NewProc("IsWindowVisible")
 	pSetForegroundWindow           = user32.NewProc("SetForegroundWindow")
 	pGetMessageW                   = user32.NewProc("GetMessageW")
@@ -60,18 +59,19 @@ const (
 	wmClose           = 0x0010
 	wmQueryEndSession = 0x0011
 	wmEndSession      = 0x0016
-	wmGetMinMaxInfo   = 0x0024
 	wmSetIcon         = 0x0080
 	wmCommand         = 0x0111
+	wmSysCommand      = 0x0112
 	wmNull            = 0x0000
 	wmContextMenu     = 0x007B
 	wmLButtonUp       = 0x0202
 	wmDpiChanged      = 0x02E0
 	wmApp             = 0x8000
 
-	// A normal window: title bar, system menu, minimize and maximize, and a
-	// resizing border. WM_GETMINMAXINFO keeps it from getting too small.
-	wsWindow     = 0x00CF0000 // WS_OVERLAPPEDWINDOW
+	// A fixed window: title bar, system menu, minimize and close. No resize
+	// border (no Snap, no edge dragging) and no maximize box (DefWindowProc
+	// ignores a caption double-click); WM_SYSCOMMAND refuses the rest.
+	wsWindow     = 0x00CA0000 // WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX
 	cwUseDefault = 0x80000000 // CW_USEDEFAULT
 
 	swHide    = 0
@@ -128,11 +128,6 @@ type wndClassEx struct {
 	MenuName   *uint16
 	ClassName  *uint16
 	IconSm     windows.Handle
-}
-
-// MINMAXINFO, the parameter of WM_GETMINMAXINFO.
-type minMaxInfo struct {
-	Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize point
 }
 
 type monitorInfo struct {

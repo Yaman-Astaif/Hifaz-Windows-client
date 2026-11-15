@@ -219,15 +219,9 @@ func (h *windowHost) makeIcons() {
 	}
 }
 
-// show brings the window back as it was: a minimized one is restored (to
-// maximized, if it was), a hidden one is shown in its last state, so a
-// maximized window stays maximized.
+// show restores a minimized window and shows a hidden one.
 func (h *windowHost) show() {
-	if r, _, _ := pIsIconic.Call(uintptr(h.hwnd)); r != 0 {
-		pShowWindow.Call(uintptr(h.hwnd), swRestore)
-	} else {
-		pShowWindow.Call(uintptr(h.hwnd), swShow)
-	}
+	pShowWindow.Call(uintptr(h.hwnd), swRestore)
 	pSetForegroundWindow.Call(uintptr(h.hwnd))
 	h.fitWebView(true)
 	if h.webview != nil {
@@ -293,15 +287,15 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 	case wmSize:
 		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
 		return 0
-	case wmGetMinMaxInfo:
-		// The user can resize the window, but not below the minimum page size.
-		dpi := h.dpi()
-		fw, fh := frame(dpi)
-		mmi := (*minMaxInfo)(osPointer(l))
-		mmi.MinTrackSize.X, mmi.MinTrackSize.Y = minTrackSize(dpi, fw, fh, workArea(hwnd))
-		return 0
+	case wmSysCommand:
+		// The window has one fixed size: no sizing, no maximizing.
+		if !allowSysCommand(w) {
+			return 0
+		}
 	case wmDpiChanged:
-		// Take the size Windows suggests for the new monitor.
+		// Take the rect Windows suggests for the new monitor: with
+		// per-monitor v2 it scales the fixed client area and the frame, and
+		// working it out again would make the window jump mid-drag.
 		r := (*rect)(osPointer(l))
 		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
 			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
