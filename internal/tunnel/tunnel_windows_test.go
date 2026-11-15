@@ -38,6 +38,21 @@ func TestTunnelUpDown(t *testing.T) {
 	if _, err := driver.OpenAdapter(AdapterName); err != nil {
 		t.Fatalf("adapter not found: %v", err)
 	}
+	// DNS waits for the server's answer: nothing until SetDNS.
+	noRule := func(when string) {
+		t.Helper()
+		if _, err := registry.OpenKey(registry.LOCAL_MACHINE, nrptLocal+`\`+nrptRuleKey, registry.QUERY_VALUE); !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+			t.Fatalf("%s: DNS rule present: %v", when, err)
+		}
+	}
+	noRule("after Up")
+	// The probe goes to the DNS server inside the routes; nothing answers.
+	if err := tun.Probe(); err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if err := tun.SetDNS(true); err != nil {
+		t.Fatal(err)
+	}
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, nrptLocal+`\`+nrptRuleKey, registry.QUERY_VALUE)
 	if err != nil {
 		t.Fatalf("DNS rule not written: %v", err)
@@ -62,6 +77,11 @@ func TestTunnelUpDown(t *testing.T) {
 	if err := tun.Reconfigure(cfg2); err != nil {
 		t.Fatal(err)
 	}
+	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, nrptLocal+`\`+nrptRuleKey, registry.QUERY_VALUE); err != nil {
+		t.Fatalf("DNS rule lost by Reconfigure: %v", err)
+	} else {
+		k.Close()
+	}
 
 	// A configuration without DNS servers removes the rule; the next one
 	// with DNS brings it back.
@@ -78,6 +98,22 @@ func TestTunnelUpDown(t *testing.T) {
 		t.Fatalf("DNS rule kept without DNS servers: %v", err)
 	}
 	if err := tun.Reconfigure(cfg2); err != nil {
+		t.Fatal(err)
+	}
+
+	// The server stops answering: DNS goes, and a newer configuration
+	// does not bring it back.
+	if err := tun.SetDNS(false); err != nil {
+		t.Fatal(err)
+	}
+	noRule("after SetDNS(false)")
+	c.Version = 4
+	cfg4, _ := c.Parse()
+	if err := tun.Reconfigure(cfg4); err != nil {
+		t.Fatal(err)
+	}
+	noRule("Reconfigure with DNS off")
+	if err := tun.SetDNS(true); err != nil {
 		t.Fatal(err)
 	}
 
