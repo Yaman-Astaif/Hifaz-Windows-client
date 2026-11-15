@@ -63,6 +63,10 @@ func (f *fakeTunnel) Down() error {
 
 func (f *fakeTunnel) Stats() (daemon.Stats, error) { return daemon.Stats{}, nil }
 
+func (f *fakeTunnel) SetDNS(bool) error { return nil }
+
+func (f *fakeTunnel) Probe() error { return nil }
+
 func (f *fakeTunnel) state() (bool, *protocol.TunnelConfig, protocol.Key, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

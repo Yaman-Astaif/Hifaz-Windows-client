@@ -16,6 +16,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,11 +34,19 @@ type Caller struct {
 
 // Tunnel is the network side, implemented on Windows by internal/tunnel.
 type Tunnel interface {
-	// Up creates the adapter and applies cfg. It must leave nothing behind
-	// when it fails.
+	// Up creates the adapter and applies cfg, all but DNS: the engine turns
+	// DNS on once the server answers. It must leave nothing behind when it
+	// fails.
 	Up(cfg *protocol.TunnelConfig, private, psk protocol.Key) error
-	// Reconfigure applies a newer configuration to the running tunnel.
+	// Reconfigure applies a newer configuration to the running tunnel;
+	// DNS only while it is on.
 	Reconfigure(cfg *protocol.TunnelConfig) error
+	// SetDNS applies (on) or removes Hifaz's DNS: the interface DNS and
+	// the name resolution rule.
+	SetDNS(on bool) error
+	// Probe sends one packet into the tunnel, so WireGuard starts a
+	// handshake. It never waits for an answer.
+	Probe() error
 	// Down removes the adapter, its routes and its DNS rules.
 	Down() error
 	// Stats reads traffic counters.
@@ -64,6 +73,9 @@ type Engine struct {
 	policy func() policy.Policy
 	now    func() time.Time
 	log    func(msg string, args ...any)
+	// findBlocker looks for what keeps the server from answering; nil
+	// where it cannot be told.
+	findBlocker func() (*ipc.Blocker, error)
 
 	mu       sync.Mutex
 	nonces   map[string][]issuedNonce // SID -> nonces, oldest first
@@ -85,6 +97,7 @@ type owner struct {
 	server      string
 	cfg         *protocol.TunnelConfig
 	connectedAt time.Time
+	link        *link
 }
 
 // Options configure an Engine.
@@ -94,12 +107,16 @@ type Options struct {
 	Policy func() policy.Policy          // nil: the default policy
 	Now    func() time.Time              // nil: time.Now
 	Log    func(msg string, args ...any) // nil: no logging
+	// FindBlocker reports what keeps the server from answering, if it can
+	// tell: nil, nil when nothing is found. It must only read. nil: not
+	// available.
+	FindBlocker func() (*ipc.Blocker, error)
 }
 
 // New returns an Engine.
 func New(o Options) *Engine {
 	e := &Engine{
-		tunnel: o.Tunnel, pins: o.Pins, policy: o.Policy, now: o.Now, log: o.Log,
+		tunnel: o.Tunnel, pins: o.Pins, policy: o.Policy, now: o.Now, log: o.Log, findBlocker: o.FindBlocker,
 		nonces: map[string][]issuedNonce{}, state: ipc.StateIdle,
 		changed: make(chan struct{}), lastErrs: map[string]string{},
 	}
@@ -198,6 +215,7 @@ func (e *Engine) statusLocked(c Caller) *ipc.Status {
 		s.AllowedIPs = append(s.AllowedIPs, p.String())
 	}
 	s.ConnectedAt = e.owner.connectedAt
+	s.Link, s.Blocker = e.owner.link.state, e.owner.link.blocker
 	if st, err := e.tunnel.Stats(); err == nil {
 		s.LastHandshake, s.RxBytes, s.TxBytes = st.LastHandshake, st.RxBytes, st.TxBytes
 	}
@@ -334,10 +352,12 @@ func (e *Engine) connect(conn uint64, c Caller, req *ipc.Request) *ipc.Response 
 		e.setStateLocked(ipc.StateIdle)
 		return fail(ipc.ErrTunnel, err.Error())
 	}
-	e.owner = &owner{conn: conn, caller: c, server: server, cfg: cfg, connectedAt: e.now().UTC()}
+	now := e.now()
+	e.owner = &owner{conn: conn, caller: c, server: server, cfg: cfg, connectedAt: now.UTC(), link: newLink(now)}
 	delete(e.lastErrs, c.SID)
 	e.setStateLocked(ipc.StateConnected)
-	e.log("tunnel up", "sid", c.SID, "server", server, "config", cfg.Version)
+	e.log("tunnel up; waiting for the server to answer", "sid", c.SID, "server", server, "config", cfg.Version)
+	e.probeLocked()
 	return &ipc.Response{Status: e.statusLocked(c)}
 }
 
@@ -358,14 +378,21 @@ func (e *Engine) update(conn uint64, c Caller, req *ipc.Request) *ipc.Response {
 		return &ipc.Response{Status: e.statusLocked(c)}
 	}
 	if cfg.Version > e.owner.cfg.Version {
+		newKey := cfg.ServerPublicKey != e.owner.cfg.ServerPublicKey
 		if err := e.tunnel.Reconfigure(cfg); err != nil {
 			e.log("applying the new configuration failed; taking the tunnel down", "err", err)
 			e.downLocked(ipc.ErrTunnel)
 			return fail(ipc.ErrTunnel, err.Error())
 		}
 		e.owner.cfg = cfg
-		e.bumpLocked()
 		e.log("tunnel reconfigured", "config", cfg.Version)
+		if newKey {
+			// A new peer has no handshake yet: wait for it again.
+			e.owner.link.wait(e.now())
+			e.log("new server key; waiting for the server to answer")
+			e.probeLocked()
+		}
+		e.bumpLocked()
 	}
 	return &ipc.Response{Status: e.statusLocked(c)}
 }
@@ -460,6 +487,97 @@ func (e *Engine) verifyLocked(c Caller, doc protocol.SignedDocument, pin protoco
 	}
 	return doc.Verify(pin, protocol.Expect{Type: typ, Server: server, Nonce: h.Nonce,
 		Now: e.now(), MaxSkew: protocol.DefaultMaxSkew}, out)
+}
+
+// Run checks every second whether the server answers, until ctx ends.
+func (e *Engine) Run(ctx context.Context) {
+	t := time.NewTicker(linkPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.checkLink()
+		}
+	}
+}
+
+// checkLink moves the owner's link state on: DNS on when the server
+// answers, off when it does not, a probe while it does not, and a look for
+// what blocks it. Only Run calls it.
+func (e *Engine) checkLink() {
+	e.mu.Lock()
+	o := e.owner
+	if o == nil {
+		e.mu.Unlock()
+		return
+	}
+	st, err := e.tunnel.Stats()
+	if err != nil {
+		e.mu.Unlock()
+		return
+	}
+	before := o.link.state
+	a := o.link.step(st, e.now())
+	if a.dnsOff {
+		if err := e.tunnel.SetDNS(false); err != nil {
+			e.log("removing DNS failed; trying again", "err", err)
+		} else {
+			o.link.dnsOn = false
+		}
+	}
+	if a.dnsOn {
+		if err := e.tunnel.SetDNS(true); err != nil {
+			e.log("applying DNS failed; taking the tunnel down", "err", err)
+			e.downLocked(ipc.ErrTunnel)
+			e.mu.Unlock()
+			return
+		}
+		o.link.dnsOn = true
+	}
+	if a.probe {
+		e.probeLocked()
+	}
+	if a.changed {
+		e.bumpLocked()
+		e.log("server link", "state", o.link.state, "was", before, "last_handshake", st.LastHandshake)
+	}
+	check := a.checkBlocker && e.findBlocker != nil
+	e.mu.Unlock()
+	if !check {
+		return
+	}
+
+	// Outside the lock: reading the firewall state may take a moment.
+	b, err := e.findBlocker()
+	if err != nil {
+		e.log("looking for what blocks the server failed", "err", err)
+		b = nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.owner != o || o.link.state != ipc.LinkNoAnswer || sameBlocker(o.link.blocker, b) {
+		return
+	}
+	o.link.blocker = b
+	e.bumpLocked()
+	if b != nil {
+		e.log("the server is blocked", "app", b.App, "tunnels", b.Tunnels)
+	}
+}
+
+func sameBlocker(a, b *ipc.Blocker) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.App == b.App && slices.Equal(a.Tunnels, b.Tunnels)
+}
+
+func (e *Engine) probeLocked() {
+	if err := e.tunnel.Probe(); err != nil {
+		e.log("probe packet not sent", "err", err)
+	}
 }
 
 // downLocked takes the tunnel down; reason, if set, is recorded for the owner.
