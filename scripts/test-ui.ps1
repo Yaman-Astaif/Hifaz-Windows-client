@@ -40,23 +40,46 @@ public static class W {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int Size; public RECT Monitor, Work; public uint Flags; }
 
-  // Shrink asks the window to become 100x100, measures what it allowed, and
-  // puts it back. All in physical pixels (per-monitor DPI aware on this
-  // thread), the same as the app. Returns client width and height, window
-  // width and height, the window's DPI, work area width and height.
-  public static int[] Shrink(IntPtr h) {
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+
+  // Measure returns the client width and height, window width and height,
+  // the window's DPI, and the work area's width and height. All in
+  // physical pixels (per-monitor DPI aware on this thread), as the app.
+  public static int[] Measure(IntPtr h) {
     IntPtr old = SetThreadDpiAwarenessContext(new IntPtr(-4));
     try {
-      RECT before; GetWindowRect(h, out before);
-      SetWindowPos(h, IntPtr.Zero, 0, 0, 100, 100, 0x0002 | 0x0004 | 0x0010); // NOMOVE, NOZORDER, NOACTIVATE
       RECT c; GetClientRect(h, out c);
       RECT w; GetWindowRect(h, out w);
       int dpi = (int)GetDpiForWindow(h);
       MONITORINFO mi = new MONITORINFO(); mi.Size = Marshal.SizeOf(mi);
       GetMonitorInfo(MonitorFromWindow(h, 2), ref mi);
-      SetWindowPos(h, IntPtr.Zero, before.Left, before.Top, before.Right - before.Left, before.Bottom - before.Top, 0x0004 | 0x0010);
       return new int[] { c.Right - c.Left, c.Bottom - c.Top, w.Right - w.Left, w.Bottom - w.Top, dpi,
         mi.Work.Right - mi.Work.Left, mi.Work.Bottom - mi.Work.Top };
+    } finally {
+      if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old);
+    }
+  }
+
+  // Unchanged sends the window a message (with a point on its title bar if
+  // caption is set) and reports whether it stayed as it was: not maximized,
+  // the same place and size. A maximized window is restored afterwards.
+  public static bool Unchanged(IntPtr h, int msg, int wparam, bool caption) {
+    IntPtr old = SetThreadDpiAwarenessContext(new IntPtr(-4));
+    try {
+      RECT before; GetWindowRect(h, out before);
+      IntPtr l = IntPtr.Zero;
+      if (caption) {
+        int x = before.Left + 60, y = before.Top + 10;
+        l = new IntPtr((int)(((uint)(y & 0xFFFF) << 16) | (uint)(x & 0xFFFF)));
+      }
+      SendMessage(h, msg, new IntPtr(wparam), l);
+      System.Threading.Thread.Sleep(500);
+      RECT after; GetWindowRect(h, out after);
+      bool zoomed = IsZoomed(h);
+      if (zoomed) ShowWindow(h, 9); // SW_RESTORE, for the page checks
+      return !zoomed && before.Left == after.Left && before.Top == after.Top &&
+        before.Right == after.Right && before.Bottom == after.Bottom;
     } finally {
       if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old);
     }
@@ -82,7 +105,7 @@ try {
   $app = Start-Process $exe -PassThru
   Start-Sleep -Seconds 2
 
-  # The window: found by its class, visible, resizable with a minimum size.
+  # The window: found by its class, visible, one fixed size.
   $hwnd = [IntPtr]::Zero
   $deadline = (Get-Date).AddSeconds(30)
   while ($hwnd -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
@@ -94,19 +117,28 @@ try {
   while (-not [W]::IsWindowVisible($hwnd) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
   Check ([W]::IsWindowVisible($hwnd)) "window shown"
   $style = [W]::GetWindowLong($hwnd, -16)
-  Check (($style -band 0x00010000) -ne 0) "maximize button (WS_MAXIMIZEBOX)"
-  Check (($style -band 0x00040000) -ne 0) "resizable (WS_THICKFRAME)"
-  Check (($style -band 0x00020000) -ne 0) "minimize button"
+  Write-Host ("window style 0x{0:X8}" -f $style)
+  Check (($style -band 0x00010000) -eq 0) "no maximize button (WS_MAXIMIZEBOX)"
+  Check (($style -band 0x00040000) -eq 0) "no resize border (WS_THICKFRAME)"
+  Check (($style -band 0x00020000) -ne 0) "minimize button (WS_MINIMIZEBOX)"
+  Check (($style -band 0x00080000) -ne 0) "system menu (WS_SYSMENU)"
+  Check (($style -band 0x00C00000) -eq 0x00C00000) "title bar (WS_CAPTION)"
   $r = New-Object W+RECT; [void][W]::GetWindowRect($hwnd, [ref]$r)
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   Write-Host "window $($r.Right - $r.Left)x$($r.Bottom - $r.Top) at $($r.Left),$($r.Top); work area $($wa.Width)x$($wa.Height)"
   Check (($r.Bottom - $r.Top) -le $wa.Height -and $r.Top -ge $wa.Top) "window fits the screen"
-  # Not smaller than 400x560 page pixels (scaled for the DPI), unless the
-  # monitor's work area is smaller still.
-  $m = [W]::Shrink($hwnd)
-  $minW = [int][math]::Floor(400 * $m[4] / 96); $minH = [int][math]::Floor(560 * $m[4] / 96)
-  Write-Host "shrunk to client $($m[0])x$($m[1]) (window $($m[2])x$($m[3])) at $($m[4]) DPI; minimum $($minW)x$($minH); work area $($m[5])x$($m[6])"
-  Check (($m[0] -ge $minW -or $m[2] -ge $m[5]) -and ($m[1] -ge $minH -or $m[3] -ge $m[6])) "window keeps its minimum size"
+  # The page is 460x680 page pixels (scaled for the DPI), unless the
+  # window is as tall as the monitor's work area (clamped; the page scrolls).
+  $m = [W]::Measure($hwnd)
+  $wantW = [int][math]::Floor(460 * $m[4] / 96); $wantH = [int][math]::Floor(680 * $m[4] / 96)
+  Write-Host "client $($m[0])x$($m[1]) (window $($m[2])x$($m[3])) at $($m[4]) DPI; expected $($wantW)x$($wantH); work area $($m[5])x$($m[6])"
+  Check ($m[0] -eq $wantW -and ($m[1] -eq $wantH -or $m[3] -eq $m[6])) "window has the page's fixed size"
+  # Maximizing is ignored: from the window menu or Win+Up (SC_MAXIMIZE),
+  # and a double-click on the title bar (WM_NCLBUTTONDBLCLK, HTCAPTION).
+  # SC_SIZE is not sent: if it were not ignored, its sizing loop would wait
+  # for the mouse.
+  Check ([W]::Unchanged($hwnd, 0x0112, 0xF030, $false)) "SC_MAXIMIZE is ignored"
+  Check ([W]::Unchanged($hwnd, 0x00A3, 2, $true)) "a double-click on the title bar is ignored"
   $bigIcon = [W]::SendMessage($hwnd, 0x7F, [IntPtr]1, [IntPtr]0)   # WM_GETICON, ICON_BIG
   $smallIcon = [W]::SendMessage($hwnd, 0x7F, [IntPtr]0, [IntPtr]0)
   Check ($bigIcon -ne [IntPtr]::Zero -and $smallIcon -ne [IntPtr]::Zero) "window has icons"
@@ -119,6 +151,8 @@ try {
   # The page, through WebView2's debugging port.
   node scripts\ui\check-start.mjs $Out $port
   Check ($LASTEXITCODE -eq 0) "page checks (scripts\ui\check-start.mjs)"
+  node scripts\ui\check-screens.mjs $Out $port
+  Check ($LASTEXITCODE -eq 0) "every screen at the window's size (scripts\ui\check-screens.mjs)"
 
   [void][W]::SetForegroundWindow($hwnd); Start-Sleep -Milliseconds 800
   Save-Screen "00-desktop.png"
