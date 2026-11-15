@@ -104,6 +104,12 @@ type fwpmFilterEnumTemplate0 struct {
 	calloutKey              *windows.GUID
 }
 
+// wfpCall calls p and turns a non-zero result into an error. Callers pass
+// pointers as uintptr(unsafe.Pointer(&x)) in the call itself;
+// go:uintptrescapes keeps those variables on the heap, where they cannot
+// move while Windows writes to them.
+//
+//go:uintptrescapes
 func wfpCall(p *windows.LazyProc, args ...uintptr) error {
 	if err := p.Find(); err != nil {
 		return err
