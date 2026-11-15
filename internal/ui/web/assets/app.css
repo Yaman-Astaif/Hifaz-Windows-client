@@ -1,11 +1,33 @@
 /* App-only additions to style.css. */
 
-/* The window is the page: no scroll bar unless the content needs one. */
-body { min-height: 100vh; }
-main { max-width: 440px; }
-/* Tighter than the web pages, so the longest screens fit the window
-   (460x760) without scrolling. */
-main { padding: 20px 16px 16px; }
+/* The window has one fixed size (460x680 at 100%). The page itself never
+   scrolls: the header stays at the top and main, the full width of the
+   window, scrolls when a screen is longer. Its scroll bar is at the window
+   edge, on the left in Arabic (main inherits dir="rtl"). */
+html, body { height: 100%; }
+body { overflow: hidden; }
+.top { flex: none; }
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  overflow: hidden auto;
+  /* One column, as wide as on the web pages, centred. The gutter is kept
+     on both sides whether or not the bar shows, so nothing moves when a
+     screen starts to scroll and the side margins stay even. */
+  display: grid;
+  grid-template-columns: minmax(0, 408px);
+  justify-content: center;
+  align-content: start;
+  padding: 20px 6px 16px;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
+  /* A focused field is scrolled clear of the button bar (two buttons). */
+  scroll-padding-bottom: 140px;
+}
+/* Tighter than the web pages, so most screens fit without scrolling. */
 h1 { margin: 0 0 2px; }
 .sub { margin: 0 0 14px; }
 .card { padding: 16px 18px; }
@@ -44,6 +66,52 @@ label.inline.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 .about dl { text-align: start; margin-top: 12px; }
 .credits { text-align: start; margin: 0 0 12px; padding-inline-start: 20px; font-size: 13.5px; color: var(--muted); }
 .credits li { margin-bottom: 4px; }
+
+/* The screen's buttons: right under the fields when the screen fits;
+   when it does not, they stay at the bottom of the window and the rest
+   scrolls under them, so they are never cut off. */
+:root { --bar-shade: rgb(0 0 0 / .18); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bar-shade: rgb(0 0 0 / .55); }
+}
+:root[data-theme="dark"] { --bar-shade: rgb(0 0 0 / .55); }
+.actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 10px 0 16px;
+  background: var(--bg);
+  border-top: 1px solid transparent;
+}
+/* In a card: the card's own colour, out to its padding and down to its
+   rounded bottom (the card is 16px 18px padding, 12px radius, 1px border). */
+.card > .actions {
+  margin: 0 -18px -16px;
+  padding-inline: 18px;
+  background: var(--surface);
+  border-radius: 0 0 11px 11px;
+}
+.card > .actions:first-child { margin-top: -16px; padding-top: 16px; border-top: 0; }
+.btn[hidden] + .btn { margin-top: 0; }
+/* A faint edge on the bar only while content is under it: from the first
+   scroll until the bar is back in its place (main's last 16px). Without
+   scroll-driven animations there is no edge. */
+@supports (animation-timeline: scroll()) {
+  .actions {
+    animation: bar-edge auto linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range-start: normal;
+    animation-range-end: calc(100% - 16px);
+  }
+}
+@keyframes bar-edge {
+  0%, 99% {
+    border-top-color: var(--line);
+    box-shadow: 0 -10px 12px -10px var(--bar-shade);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+}
 
 /* Busy: the form waits for the app. */
 body.busy .btn { opacity: .6; cursor: progress; pointer-events: none; }

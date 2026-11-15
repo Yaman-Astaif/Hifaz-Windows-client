@@ -13,6 +13,8 @@
   let app = { version: "", developer: "" };
   let page = ""; // "", "settings" or "about": pages of the window itself
   let lastScreen = "";
+  let lastShown = ""; // page and screen, for scrolling back to the top
+  let lastError = "null";
 
   function send(msg) {
     if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(JSON.stringify(msg));
@@ -149,6 +151,15 @@
     $("p-lang").value = prefs.lang;
     $("p-theme").value = prefs.theme;
     $("p-autostart").checked = !!prefs.autostart;
+
+    // Each screen starts at the top; a new error is scrolled into view.
+    const shown = page + "/" + view.screen;
+    if (shown !== lastShown) { document.querySelector("main").scrollTop = 0; lastShown = shown; }
+    const errorKey = JSON.stringify(view.error || null); // not the text: a language switch is no new error
+    if (errorKey !== lastError) {
+      lastError = errorKey;
+      if (!err.hidden) err.scrollIntoView({ block: "nearest" });
+    }
 
     if (view.screen !== lastScreen) {
       clearSecrets();
