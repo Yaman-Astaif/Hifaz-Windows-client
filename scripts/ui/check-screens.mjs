@@ -2,9 +2,11 @@
 // show, filled as the app fills it (window.hifaz.onView, onPrefs and
 // showPage only), at 460x680 page pixels, in Arabic and English, light and
 // dark. Each one either fits, or scrolls inside main with its buttons fully
-// visible and not covered; the header never moves. Writes a screenshot of
-// each to the folder given as the first argument. Runs after check-start.mjs
-// on the same page.
+// visible and not covered, stuck to the bottom with no gap; the header never
+// moves; an error is in view as the screen first shows. A second pass runs
+// at 460x657 (a 1080p screen at 150%: the window clamped to the work area).
+// Writes a screenshot of each to the folder given as the first argument.
+// Runs after check-start.mjs on the same page.
 //
 //   node scripts/ui/check-screens.mjs <out-dir> [port]
 import { connect, waitFor } from "./cdp.mjs";
@@ -12,6 +14,7 @@ import { connect, waitFor } from "./cdp.mjs";
 const out = process.argv[2] || ".";
 const port = Number(process.argv[3] || 9222);
 const W = 460, H = 680; // the window's client area at 100% (internal/winui/geometry.go)
+const CLAMPED = 657; // 1920x1080 at 150%: a 1008-pixel work area, less the frame, at 1.5
 const failures = [];
 const check = (ok, what) => {
   console.log(`${ok ? "ok" : "FAILED"}: ${what}`);
@@ -37,6 +40,8 @@ const cases = [
   ["enroll-mfa", { screen: "enroll_mfa", error: { code: "invalid_code" },
     enroll: { ...enroll, mfa_secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
       mfa_uri: "otpauth://totp/Hifaz:first.last?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Hifaz" } }],
+  ["enroll-mfa-ok", { screen: "enroll_mfa", enroll: { ...enroll, mfa_secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+    mfa_uri: "otpauth://totp/Hifaz:first.last?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Hifaz" } }],
   ["signin", { screen: "signin", account, error: { code: "invalid_credentials" } }],
   ["signin-otp", { screen: "signin_otp", account, error: { code: "invalid_code" } }],
   ["connected", { screen: "connected", account, session: { address: "10.98.0.17", connected_at: at(-42),
@@ -47,16 +52,30 @@ const cases = [
   ["about", { screen: "signin", account }, "about"],
 ];
 
-// show draws a case and waits two frames, so layout, fonts and the
-// scroll-driven edge of the button bar are up to date.
+// show draws a case as the app would (from another screen, so the page
+// treats it as new) and waits two frames, so layout, fonts and the
+// scroll-driven edge of the button bar are up to date. It reports where the
+// page put itself (the error must be in view), then scrolls back to the top
+// for the checks.
 const show = (view, page, prefs) => cdp.evaluate(`(async () => {
   window.hifaz.onPrefs(${JSON.stringify(prefs)});
   window.hifaz.showPage("");
+  window.hifaz.onView({ screen: "loading" });
   window.hifaz.onView(${JSON.stringify(view)});
   window.hifaz.showPage(${JSON.stringify(page || "")});
   await document.fonts.ready;
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  return true;
+  const main = document.querySelector("main");
+  const m = main.getBoundingClientRect();
+  const e = document.getElementById("error");
+  const bar = [...document.querySelectorAll("section:not([hidden]) .actions")][0];
+  const limit = bar ? bar.getBoundingClientRect().top : m.bottom;
+  const r = e.getBoundingClientRect();
+  const first = { scrollTop: Math.round(main.scrollTop),
+    error: e.hidden ? null : r.top >= m.top - 1 && r.bottom <= limit + 1 };
+  main.scrollTop = 0;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return first;
 })()`);
 
 const frames = `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`;
@@ -80,6 +99,7 @@ const measure = () => cdp.evaluate(`(() => {
     fits: main.scrollHeight <= main.clientHeight,
     content: main.scrollHeight, room: main.clientHeight,
     bar: !!bar, barHeight: bar ? Math.round(bar.getBoundingClientRect().height) : 0,
+    barGap: bar ? Math.round(m.bottom - bar.getBoundingClientRect().bottom) : null,
     edge: bar ? getComputedStyle(bar).borderTopColor : "",
     buttons: buttons.map((b) => {
       const r = b.getBoundingClientRect();
@@ -106,9 +126,11 @@ try {
     for (const lang of ["ar", "en"]) {
       for (const theme of ["light", "dark"]) {
         const what = `${name}, ${lang}, ${theme}`;
-        await show(view, page, { lang, theme });
+        const first = await show(view, page, { lang, theme });
         const f = await measure();
-        console.log(`${what}: ${JSON.stringify(f)}`);
+        console.log(`${what}: first shown ${JSON.stringify(first)}; ${JSON.stringify(f)}`);
+        if (first.error !== null) check(first.error, `${what}: the error is in view as the screen shows (scrollTop ${first.scrollTop})`);
+        if (!f.fits) check(Math.abs(f.barGap) <= 1, `${what}: the stuck button bar is at the bottom, no gap (${f.barGap}px)`);
         await cdp.screenshot(`${out}/${n}-${name}-${lang}-${theme}.png`);
         check(f.sections === 1 && f.screen === (page || view.screen), `${what}: the screen is shown`);
         check(f.docScroll <= 0 && f.docScrollX <= 0 && f.mainScrollX <= 0, `${what}: the page itself does not scroll, no horizontal scrolling`);
@@ -137,6 +159,27 @@ try {
     }
     n++;
   }
+
+  // The window clamped to a shorter work area: still fits, or scrolls with
+  // its buttons visible.
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: CLAMPED, deviceScaleFactor: 1, mobile: false });
+  n = 40;
+  for (const [name, view, page] of cases) {
+    for (const lang of ["ar", "en"]) {
+      const what = `${name}, ${lang}, ${CLAMPED}px`;
+      const first = await show(view, page, { lang, theme: "light" });
+      const f = await measure();
+      console.log(`${what}: first shown ${JSON.stringify(first)}; ${JSON.stringify(f)}`);
+      await cdp.screenshot(`${out}/${n}-${name}-${lang}-${CLAMPED}.png`);
+      check(f.docScroll <= 0 && f.docScrollX <= 0 && f.mainScrollX <= 0, `${what}: the page itself does not scroll`);
+      check(f.fits || f.buttons.every((b) => b.inside && b.hit),
+        `${what}: fits (${f.content}/${f.room}px) or its buttons are visible and not covered`);
+      if (!f.fits) check(Math.abs(f.barGap) <= 1, `${what}: the stuck button bar is at the bottom, no gap (${f.barGap}px)`);
+      if (first.error !== null) check(first.error, `${what}: the error is in view as the screen shows`);
+    }
+    n++;
+  }
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false });
 
   // Long enrollment screen: a focused field is not hidden under the bar.
   for (const lang of ["ar", "en"]) {

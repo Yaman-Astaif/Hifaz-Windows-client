@@ -15,6 +15,7 @@
   let lastScreen = "";
   let lastShown = ""; // page and screen, for scrolling back to the top
   let lastError = "null";
+  let acted = false; // the user submitted or pressed a button since the last answer
 
   function send(msg) {
     if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(JSON.stringify(msg));
@@ -152,14 +153,11 @@
     $("p-theme").value = prefs.theme;
     $("p-autostart").checked = !!prefs.autostart;
 
-    // Each screen starts at the top; a new error is scrolled into view.
+    // Each screen starts at the top. While an error shows, focusing a field
+    // does not scroll: the error stays in view.
     const shown = page + "/" + view.screen;
     if (shown !== lastShown) { document.querySelector("main").scrollTop = 0; lastShown = shown; }
-    const errorKey = JSON.stringify(view.error || null); // not the text: a language switch is no new error
-    if (errorKey !== lastError) {
-      lastError = errorKey;
-      if (!err.hidden) err.scrollIntoView({ block: "nearest" });
-    }
+    const focus = { preventScroll: !err.hidden };
 
     if (view.screen !== lastScreen) {
       clearSecrets();
@@ -170,12 +168,20 @@
       if (prefilled) $("link").value = view.link;
       const first = prefilled ? document.querySelector('#f-setup button[type="submit"]')
         : document.querySelector('section[data-screen="' + view.screen + '"] input');
-      if (first && page === "") first.focus();
+      if (first && page === "") first.focus(focus);
     } else if (!view.busy && view.screen === "signin_otp" && view.error && page === "") {
       // The step is kept after a wrong code or a passing error: the field
       // (cleared when the code was sent) is ready for the next one.
-      $("o-code").focus();
+      $("o-code").focus(focus);
     }
+
+    // A new error, or the same one again after the user acted, is scrolled
+    // into view. Compared as sent, not as text: a language switch is no
+    // new error.
+    const errorKey = JSON.stringify(view.error || null);
+    if (!err.hidden && (errorKey !== lastError || (acted && !view.busy))) err.scrollIntoView({ block: "nearest" });
+    lastError = errorKey;
+    if (!view.busy) acted = false;
   }
 
   // Passwords and codes do not stay in the page once the screen changes.
@@ -207,7 +213,7 @@
   // --- user actions ----------------------------------------------------------------
 
   function onSubmit(id, f) {
-    $(id).addEventListener("submit", (ev) => { ev.preventDefault(); if (!view.busy) f(); });
+    $(id).addEventListener("submit", (ev) => { ev.preventDefault(); if (!view.busy) { acted = true; f(); } });
   }
   onSubmit("f-setup", () => act("enroll_link", { link: $("link").value.trim() }));
   onSubmit("f-enroll", () => act("enroll_password",
@@ -225,6 +231,7 @@
 
   all("[data-act]").forEach((el) => el.addEventListener("click", () => {
     if (el.dataset.act === "add_server" || el.dataset.act === "enroll_cancel") page = "";
+    acted = true;
     act(el.dataset.act);
   }));
   all("[data-page-go]").forEach((el) => el.addEventListener("click", () => { page = el.dataset.pageGo; render(); }));
