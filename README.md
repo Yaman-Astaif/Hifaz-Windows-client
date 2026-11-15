@@ -134,6 +134,12 @@ An entry that cannot be read makes the service allow no server.
   relies on its adapter's DNS without its own NRPT rule loses its private
   names while Hifaz is connected (its more specific NRPT rules still win);
   this ends when Hifaz disconnects.
+- "Connected" and Hifaz DNS only once the server answers through the
+  tunnel (WireGuard's first handshake). Until then, or while it stops
+  answering, the user's own DNS keeps working and the app says the server
+  doesn't answer, naming the WireGuard app tunnel whose kill switch
+  ("Block untunneled traffic") blocks Hifaz when that is the cause. Hifaz
+  only reads other programs' firewall rules; it never changes them.
 - Device key and WireGuard key are made on the device and sealed with
   DPAPI for the current user (no admin rights). A TPM-backed key is a later
   step.

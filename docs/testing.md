@@ -6,7 +6,7 @@
 |---|---|
 | `make check` (any system) | Protocol against the shared vectors (`internal/protocol/testdata/vectors.json`, a copy of `docs/client-protocol-vectors.json` in the Hifaz repository; keep them identical). End-to-end app flows against `internal/fakeserver` and the real service engine: enrollment with MFA, sign-in with OTP, configuration changes, server-ended sessions, disconnect, quit, key renewal, refused full tunnel, wrong fingerprint, app too old. Engine checks: nonces, replay, other users, policy, refused documents. |
 | `scripts/interop-hifaz.sh <Hifaz checkout>` | The app's protocol client and service engine against the **real** Hifaz server (its own test harness, in memory): enrollment with MFA, the service accepting the server's signed documents and configuration, `version` on status calls, `renew_not_due`, renewal adopted at the next sign-in with `wg_public_key`, `app_too_old`, sign-out, and a certificate group. Copies what it needs into the checkout and removes it after. |
-| CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance, dialing with only the access mask normal users are granted), DPAPI, and a real WireGuardNT adapter: up, routes, NRPT rule, reconfigure, down, nothing left. Builds both MSIs as a release does. |
+| CI, Windows job | The named pipe (overlapped I/O, client identity, owner check, first-instance, dialing with only the access mask normal users are granted), DPAPI, and a real WireGuardNT adapter: up with no NRPT rule, the probe packet, the NRPT rule after `SetDNS(true)`, kept by reconfigure, removed by `SetDNS(false)` and not brought back by a reconfigure while off, down, nothing left. The WFP structure layouts, and a read-only WFP check that finds no kill switch on the CI machine. Builds both MSIs as a release does. |
 | `scripts/test-install.ps1` (CI) | Installs the MSI, checks files, service, pipe, logs, start-up entry and recovery, removes it and checks nothing is left. |
 | `scripts/test-ui.ps1` (CI) | Installs the MSI and starts the app as a user would: window style (resizable and maximizable, fits the screen, never smaller than its minimum size), icons, version information; then, through a local debugging port (`HIFAZ_WEBVIEW_DEBUG_PORT`, set only by the test), the page: served from the app, first screen, Arabic/RTL, fonts, English, dark theme, an error, Settings, About, and the enrollment password screen (with an error and the device name) fitting 460x760 without scrolling in English and Arabic. Screenshots of the desktop and every screen go to the `ci/ui-screenshots` branch. |
 
@@ -36,7 +36,7 @@ Enrollment
 - [ ] The device card on the dashboard shows method `app`, platform, app version, OS.
 
 Sign-in and session
-- [ ] Sign in with password, then OTP. Tunnel up; only the group's ranges routed (`route print`); `Get-DnsClientNrptPolicy` shows one rule with Namespace `.` and the Hifaz DNS server; names in the search domain and a private name outside the zone (`hifaz dns add app.example.com. ...`) resolve through Hifaz DNS (`Resolve-DnsName`). While connected Hifaz DNS sees all lookups, as with the WireGuard app.
+- [ ] Sign in with password, then OTP. "Waiting for the Hifaz server to answer" for a moment, then Connected (the tray icon turns connected only then). Tunnel up; only the group's ranges routed (`route print`); `Get-DnsClientNrptPolicy` shows one rule with Namespace `.` and the Hifaz DNS server; names in the search domain and a private name outside the zone (`hifaz dns add app.example.com. ...`) resolve through Hifaz DNS (`Resolve-DnsName`). While connected Hifaz DNS sees all lookups, as with the WireGuard app.
 - [ ] Sign out: the rule is gone and `Resolve-DnsName www.example.com` works through the normal DNS; another VPN connected at the same time keeps working.
 - [ ] Sign in, then sleep the computer past the idle timeout (or the time limit) and resume: the app notices the session has ended, the tunnel closes, and normal DNS works (`Resolve-DnsName www.example.com`, no Hifaz rule in `Get-DnsClientNrptPolicy`).
 - [ ] The same with a server whose Hifaz DNS answers its own name privately (`hifaz dns add <server name>. <private address>` on the server, e.g. `vpn.example.com. 10.98.0.1`): sign in, force a reconnect while connected (switch networks, or restart the server's web service), sleep past the idle timeout, resume: the session ends, the tunnel closes, the Hifaz rule is gone from `Get-DnsClientNrptPolicy`, and normal DNS works.
@@ -61,6 +61,12 @@ Several users
 
 Coexistence
 - [ ] Official WireGuard app installed with its own tunnel up at the same time: both work; uninstalling Hifaz leaves the WireGuard app working.
+
+Alongside the WireGuard app
+- [ ] A WireGuard app tunnel with `0.0.0.0/0, ::/0` and "Block untunneled traffic" **on**: sign in to Hifaz. Within about 10 seconds the app shows "Signed in, but the Hifaz server doesn't answer" and the warning naming that tunnel (English and Arabic, right-to-left); the tray tip says the server doesn't answer. Normal DNS keeps working through the other tunnel (`Resolve-DnsName www.example.com`); `Get-DnsClientNrptPolicy` has no Hifaz rule. Sign out: nothing of Hifaz is left; the other tunnel is untouched.
+- [ ] The same tunnel with "Block untunneled traffic" **off**: Hifaz connects, DNS goes to Hifaz DNS, its networks are reachable.
+- [ ] No other VPN, the server's UDP port blocked (on the server or a test firewall): the general "doesn't answer" text, normal DNS, no Hifaz rule. Unblock it: Connected within about 10 seconds, the Hifaz rule appears.
+- [ ] Connected and idle for more than 5 minutes: still Connected, no traffic counted by the server (idle timeout works as before).
 - [ ] Another VPN (OpenVPN or the system VPN): both work.
 - [ ] Sleep and wake, Wi-Fi change: the session continues or ends cleanly.
 - [ ] Proxy set in Windows settings: the app reaches the server through it.
