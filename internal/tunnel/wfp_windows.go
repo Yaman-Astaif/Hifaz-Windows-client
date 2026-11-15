@@ -179,13 +179,17 @@ func readProviders(engine windows.Handle) ([]wfpProvider, error) {
 			uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
 			return nil, err
 		}
-		if n == 0 || entries == nil {
+		if entries == nil {
 			return out, nil
 		}
 		for _, p := range unsafe.Slice(entries, n) {
 			out = append(out, wfpProvider{Key: GUID(p.providerKey), Name: windows.UTF16PtrToString(p.displayData.name)})
 		}
+		// Freed whenever Windows returned an array, even an empty one.
 		procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
+		if n == 0 {
+			return out, nil
+		}
 	}
 }
 
@@ -204,13 +208,17 @@ func readFilters(engine windows.Handle, layer windows.GUID) ([]wfpFilter, error)
 			uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
 			return nil, err
 		}
-		if n == 0 || entries == nil {
+		if entries == nil {
 			return out, nil
 		}
 		for _, f := range unsafe.Slice(entries, n) {
 			out = append(out, toFilter(f))
 		}
+		// Freed whenever Windows returned an array, even an empty one.
 		procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
+		if n == 0 {
+			return out, nil
+		}
 	}
 }
 

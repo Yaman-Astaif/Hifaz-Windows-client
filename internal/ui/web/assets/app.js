@@ -46,7 +46,9 @@
   }
 
   // blockerText says why the server doesn't answer, naming another VPN's
-  // tunnels when known. Names are isolated so they keep their own direction.
+  // tunnels when known. Each name is isolated so it keeps its own direction;
+  // the texts isolate the whole "WireGuard: names" piece as well, so in
+  // Arabic its colon and commas stay in the left-to-right run.
   function blockerText(b) {
     if (b && b.app === "wireguard") {
       const names = (b.tunnels || []).map((n) => "\u2068" + n + "\u2069").join(", ");
