@@ -353,6 +353,10 @@ func TestEnrollSignInAndFollow(t *testing.T) {
 	if v.Session == nil || v.Session.Address != "10.98.10.4/32" {
 		t.Fatalf("connected view %+v", v.Session)
 	}
+	// The tunnel is up; the server has not answered yet.
+	if v.Session.Link != string(ipc.LinkWaiting) {
+		t.Fatalf("link %q", v.Session.Link)
+	}
 	up, cfg, psk, _ := h.tun.state()
 	if !up || cfg.Version != 1 || psk != h.srv.Device("d_0001").PSK {
 		t.Fatal("tunnel not up with the enrolled preshared key")

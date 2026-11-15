@@ -153,7 +153,10 @@
   <!-- Connected -->
   <section data-screen="connected" aria-live="polite">
     <div class="card">
-      <p class="ok"><span class="dot" aria-hidden="true"></span><span data-t="connected"></span></p>
+      <p class="ok" data-show="session.up"><span class="dot" aria-hidden="true"></span><span data-t="connected"></span></p>
+      <p class="ok waiting" data-show="session.waiting" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkWaiting"></span></p>
+      <p class="ok no-answer" data-show="session.no_answer" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkNoAnswer"></span></p>
+      <p class="warn" data-field="session.blocker_text" data-show="session.blocker_text" hidden></p>
       <dl>
         <dt data-t="server"></dt><dd class="mono" data-field="account.host"></dd>
         <dt data-t="user"></dt><dd class="mono" data-field="account.username"></dd>

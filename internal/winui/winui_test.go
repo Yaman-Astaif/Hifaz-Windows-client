@@ -128,3 +128,28 @@ func TestDebugPortArg(t *testing.T) {
 		}
 	}
 }
+
+func TestTrayState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    app.View
+		tip  string
+		up   bool
+	}{
+		{"signed out", app.View{Screen: app.ScreenSignIn}, "disconnected", false},
+		{"connected, old service", app.View{Screen: app.ScreenConnected, Session: &app.SessionView{}}, "connected", true},
+		{"connected", app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "up"}}, "connected", true},
+		{"waiting", app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "waiting"}}, "waiting", false},
+		{"no answer", app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "no_answer"}}, "noAnswer", false},
+	} {
+		tip, up := trayState(tc.v)
+		if tip != tc.tip || up != tc.up {
+			t.Errorf("%s: %q %v, want %q %v", tc.name, tip, up, tc.tip, tc.up)
+		}
+		for _, lang := range []string{"ar", "en"} {
+			if trayText[lang][tip] == "" {
+				t.Errorf("%s: no %s text for %q", tc.name, lang, tip)
+			}
+		}
+	}
+}

@@ -60,6 +60,11 @@ window.I18N = (function () {
       otpSub: "أدخل الرمز الظاهر في تطبيق المصادقة.",
 
       connected: "متصل",
+      linkWaiting: "بانتظار ردّ خادم حِفاظ…",
+      linkNoAnswer: "تم تسجيل الدخول، لكن خادم حِفاظ لا يردّ.",
+      blockedWireGuardNamed: "اتصال VPN آخر يمنع الاتصالات الأخرى (WireGuard: {tunnel}). في تطبيق WireGuard، عدّل ذلك النفق وألغِ تحديد «Block untunneled traffic»، أو أوقف النفق، لتستخدم حِفاظ.",
+      blockedWireGuard: "اتصال VPN آخر يمنع الاتصالات الأخرى (WireGuard). في تطبيق WireGuard، عدّل نفقه وألغِ تحديد «Block untunneled traffic»، أو أوقف النفق، لتستخدم حِفاظ.",
+      noAnswerGeneral: "خادم حِفاظ لا يردّ. قد يكون اتصال VPN آخر أو جدار حماية يمنعه.",
       vpnAddress: "عنوان الشبكة",
       connectedSince: "متصل منذ",
       sessionEnds: "تنتهي الجلسة",
@@ -205,6 +210,11 @@ window.I18N = (function () {
       otpSub: "Enter the code your authenticator app shows.",
 
       connected: "Connected",
+      linkWaiting: "Waiting for the Hifaz server to answer…",
+      linkNoAnswer: "Signed in, but the Hifaz server doesn't answer.",
+      blockedWireGuardNamed: "Another VPN is blocking other connections (WireGuard: {tunnel}). In the WireGuard app, edit that tunnel and turn off 'Block untunneled traffic', or turn the tunnel off, to use Hifaz.",
+      blockedWireGuard: "Another VPN is blocking other connections (WireGuard). In the WireGuard app, edit its tunnel and turn off 'Block untunneled traffic', or turn the tunnel off, to use Hifaz.",
+      noAnswerGeneral: "The Hifaz server doesn't answer. Another VPN or a firewall may be blocking it.",
       vpnAddress: "Network address",
       connectedSince: "Connected since",
       sessionEnds: "Session ends",
