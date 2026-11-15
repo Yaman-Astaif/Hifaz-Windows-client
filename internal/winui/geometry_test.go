@@ -73,3 +73,44 @@ func TestAllowSysCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestDPIChanged(t *testing.T) {
+	const fw, fh = 9, 45 // the frame at 144 DPI
+	w, h := int32(690+fw), int32(1020+fh)
+
+	// Room enough: the suggested place, the fixed size for the new DPI.
+	work := rect{Left: 1920, Top: 0, Right: 1920 + 2560, Bottom: 1400}
+	suggested := rect{Left: 2000, Top: 100, Right: 2000 + 700, Bottom: 100 + 1000}
+	if r, want := dpiChanged(suggested, 144, fw, fh, work), (rect{Left: 2000, Top: 100, Right: 2000 + w, Bottom: 100 + h}); r != want {
+		t.Errorf("room enough: %+v, want %+v", r, want)
+	}
+
+	// 100% to a 1080p monitor at 150% (work area 1032 high): the suggested
+	// size would be taller than the work area; the window is clamped to it
+	// and moved up into it.
+	work = rect{Left: 1920, Right: 3840, Bottom: 1032}
+	suggested = rect{Left: 2100, Top: 150, Right: 2100 + w, Bottom: 150 + h}
+	r := dpiChanged(suggested, 144, fw, fh, work)
+	if r.Top != 0 || r.Bottom != 1032 || r.Left != 2100 || r.Right-r.Left != w {
+		t.Errorf("clamped: %+v", r)
+	}
+
+	// Past the work area's right and bottom edges: moved back inside.
+	work = rect{Left: 1920, Top: 40, Right: 3840, Bottom: 1440}
+	suggested = rect{Left: 3500, Top: 600, Right: 3500 + w, Bottom: 600 + h}
+	r = dpiChanged(suggested, 144, fw, fh, work)
+	if r.Right != 3840 || r.Bottom != 1440 || r.Right-r.Left != w || r.Bottom-r.Top != h {
+		t.Errorf("moved inside: %+v", r)
+	}
+	// And past the left and top edges.
+	suggested = rect{Left: 1800, Top: 0, Right: 1800 + w, Bottom: h}
+	if r = dpiChanged(suggested, 144, fw, fh, work); r.Left != 1920 || r.Top != 40 {
+		t.Errorf("moved inside, top left: %+v", r)
+	}
+
+	// No work area known: the suggested place, the full size.
+	suggested = rect{Left: 10, Top: 20, Right: 500, Bottom: 600}
+	if r = dpiChanged(suggested, 96, 6, 29, rect{}); r != (rect{Left: 10, Top: 20, Right: 10 + 466, Bottom: 20 + 709}) {
+		t.Errorf("no work area: %+v", r)
+	}
+}

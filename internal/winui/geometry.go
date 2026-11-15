@@ -38,6 +38,23 @@ func placement(dpi int, frameW, frameH int32, work rect) rect {
 	return rect{Left: x, Top: y, Right: x + w, Bottom: y + h}
 }
 
+// dpiChanged is where the window goes when it moves to a monitor with
+// another DPI. Windows suggests a rect, but its size can be taller than the
+// new monitor's work area, and the user cannot resize the window. So it
+// keeps the suggested place, takes the fixed size for the new DPI (clamped
+// to the work area, as placement does), and moves back inside the work
+// area if it sticks out. An empty work area (unknown) moves nothing.
+func dpiChanged(suggested rect, dpi int, frameW, frameH int32, work rect) rect {
+	p := placement(dpi, frameW, frameH, work)
+	w, h := p.Right-p.Left, p.Bottom-p.Top
+	x, y := suggested.Left, suggested.Top
+	if !work.empty() {
+		x = max(work.Left, min(x, work.Right-w))
+		y = max(work.Top, min(y, work.Bottom-h))
+	}
+	return rect{Left: x, Top: y, Right: x + w, Bottom: y + h}
+}
+
 // allowSysCommand reports whether the window passes a WM_SYSCOMMAND on to
 // Windows. Sizing and maximizing are refused, whatever started them (the
 // window menu, Win+Up, a keyboard shortcut); the low four bits are Windows'

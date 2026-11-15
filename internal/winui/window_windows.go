@@ -177,6 +177,20 @@ func frame(dpi int) (w, h int32) {
 // empty if it cannot be found.
 func workArea(hwnd windows.HWND) rect {
 	mon, _, _ := pMonitorFromWindow.Call(uintptr(hwnd), 2 /* MONITOR_DEFAULTTONEAREST */)
+	return monitorWork(mon)
+}
+
+// workAreaAt is the work area of the monitor nearest to r; empty if it
+// cannot be found.
+func workAreaAt(r rect) rect {
+	mon, _, _ := pMonitorFromRect.Call(uintptr(unsafe.Pointer(&r)), 2 /* MONITOR_DEFAULTTONEAREST */)
+	return monitorWork(mon)
+}
+
+func monitorWork(mon uintptr) rect {
+	if mon == 0 {
+		return rect{}
+	}
 	mi := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
 	if r, _, _ := pGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
 		return rect{}
@@ -285,6 +299,12 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		pDestroyWindow.Call(uintptr(hwnd))
 		return 0
 	case wmSize:
+		if w == 2 /* SIZE_MAXIMIZED */ {
+			// Maximized anyway (ShowWindow from a shortcut set to "Run:
+			// Maximized", or another program): back to the fixed size.
+			pShowWindow.Call(uintptr(hwnd), swRestore)
+			return 0
+		}
 		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
 		return 0
 	case wmSysCommand:
@@ -293,10 +313,12 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 			return 0
 		}
 	case wmDpiChanged:
-		// Take the rect Windows suggests for the new monitor: with
-		// per-monitor v2 it scales the fixed client area and the frame, and
-		// working it out again would make the window jump mid-drag.
-		r := (*rect)(osPointer(l))
+		// The place Windows suggests for the new monitor, but the fixed
+		// size for its DPI, inside its work area (see dpiChanged).
+		dpi := int(w >> 16 & 0xffff)
+		fw, fh := frame(dpi)
+		s := *(*rect)(osPointer(l))
+		r := dpiChanged(s, dpi, fw, fh, workAreaAt(s))
 		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
 			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 		h.makeIcons()

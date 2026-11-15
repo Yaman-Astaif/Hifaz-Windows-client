@@ -45,6 +45,7 @@ var (
 	pMessageBoxW                   = user32.NewProc("MessageBoxW")
 	pGetClientRect                 = user32.NewProc("GetClientRect")
 	pMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
+	pMonitorFromRect               = user32.NewProc("MonitorFromRect")
 	pGetMonitorInfoW               = user32.NewProc("GetMonitorInfoW")
 	pAdjustWindowRectExForDpi      = user32.NewProc("AdjustWindowRectExForDpi")
 	pCreateDIBSection              = gdi32.NewProc("CreateDIBSection")

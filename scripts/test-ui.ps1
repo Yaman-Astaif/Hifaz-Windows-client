@@ -62,8 +62,9 @@ public static class W {
   }
 
   // Unchanged sends the window a message (with a point on its title bar if
-  // caption is set) and reports whether it stayed as it was: not maximized,
-  // the same place and size. A maximized window is restored afterwards.
+  // caption is set; msg 0 calls ShowWindow with wparam instead) and reports
+  // whether it stayed as it was: not maximized, the same place and size. A
+  // maximized window is restored afterwards.
   public static bool Unchanged(IntPtr h, int msg, int wparam, bool caption) {
     IntPtr old = SetThreadDpiAwarenessContext(new IntPtr(-4));
     try {
@@ -73,7 +74,7 @@ public static class W {
         int x = before.Left + 60, y = before.Top + 10;
         l = new IntPtr((int)(((uint)(y & 0xFFFF) << 16) | (uint)(x & 0xFFFF)));
       }
-      SendMessage(h, msg, new IntPtr(wparam), l);
+      if (msg == 0) ShowWindow(h, wparam); else SendMessage(h, msg, new IntPtr(wparam), l);
       System.Threading.Thread.Sleep(500);
       RECT after; GetWindowRect(h, out after);
       bool zoomed = IsZoomed(h);
@@ -134,11 +135,13 @@ try {
   Write-Host "client $($m[0])x$($m[1]) (window $($m[2])x$($m[3])) at $($m[4]) DPI; expected $($wantW)x$($wantH); work area $($m[5])x$($m[6])"
   Check ($m[0] -eq $wantW -and ($m[1] -eq $wantH -or $m[3] -eq $m[6])) "window has the page's fixed size"
   # Maximizing is ignored: from the window menu or Win+Up (SC_MAXIMIZE),
-  # and a double-click on the title bar (WM_NCLBUTTONDBLCLK, HTCAPTION).
+  # a double-click on the title bar (WM_NCLBUTTONDBLCLK, HTCAPTION), and
+  # ShowWindow(SW_MAXIMIZE) from outside is undone at once.
   # SC_SIZE is not sent: if it were not ignored, its sizing loop would wait
   # for the mouse.
   Check ([W]::Unchanged($hwnd, 0x0112, 0xF030, $false)) "SC_MAXIMIZE is ignored"
   Check ([W]::Unchanged($hwnd, 0x00A3, 2, $true)) "a double-click on the title bar is ignored"
+  Check ([W]::Unchanged($hwnd, 0, 3, $false)) "ShowWindow(SW_MAXIMIZE) is undone (a shortcut set to Run: Maximized)"
   $bigIcon = [W]::SendMessage($hwnd, 0x7F, [IntPtr]1, [IntPtr]0)   # WM_GETICON, ICON_BIG
   $smallIcon = [W]::SendMessage($hwnd, 0x7F, [IntPtr]0, [IntPtr]0)
   Check ($bigIcon -ne [IntPtr]::Zero -and $smallIcon -ne [IntPtr]::Zero) "window has icons"
