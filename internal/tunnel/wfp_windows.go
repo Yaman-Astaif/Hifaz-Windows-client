@@ -173,24 +173,31 @@ func readProviders(engine windows.Handle) ([]wfpProvider, error) {
 	defer procFwpmProviderDestroyEnumHandle0.Call(uintptr(engine), uintptr(h))
 	var out []wfpProvider
 	for {
-		var entries **fwpmProvider0
-		var n uint32
-		if err := wfpCall(procFwpmProviderEnum0, uintptr(engine), uintptr(h), wfpEnumBatch,
-			uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
-			return nil, err
-		}
-		if entries == nil {
-			return out, nil
-		}
-		for _, p := range unsafe.Slice(entries, n) {
-			out = append(out, wfpProvider{Key: GUID(p.providerKey), Name: windows.UTF16PtrToString(p.displayData.name)})
-		}
-		// Freed whenever Windows returned an array, even an empty one.
-		procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
-		if n == 0 {
-			return out, nil
+		more, err := providerBatch(engine, h, &out)
+		if err != nil || !more {
+			return out, err
 		}
 	}
+}
+
+// providerBatch reads one batch into out, reporting whether there may be
+// more. The batch is freed on every path, a panic included.
+func providerBatch(engine, h windows.Handle, out *[]wfpProvider) (bool, error) {
+	var entries **fwpmProvider0
+	var n uint32
+	if err := wfpCall(procFwpmProviderEnum0, uintptr(engine), uintptr(h), wfpEnumBatch,
+		uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
+		return false, err
+	}
+	if entries == nil {
+		return false, nil
+	}
+	// Freed whenever Windows returned an array, even an empty one.
+	defer procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
+	for _, p := range unsafe.Slice(entries, n) {
+		*out = append(*out, wfpProvider{Key: GUID(p.providerKey), Name: windows.UTF16PtrToString(p.displayData.name)})
+	}
+	return n > 0, nil
 }
 
 func readFilters(engine windows.Handle, layer windows.GUID) ([]wfpFilter, error) {
@@ -202,24 +209,29 @@ func readFilters(engine windows.Handle, layer windows.GUID) ([]wfpFilter, error)
 	defer procFwpmFilterDestroyEnumHandle0.Call(uintptr(engine), uintptr(h))
 	var out []wfpFilter
 	for {
-		var entries **fwpmFilter0
-		var n uint32
-		if err := wfpCall(procFwpmFilterEnum0, uintptr(engine), uintptr(h), wfpEnumBatch,
-			uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
-			return nil, err
-		}
-		if entries == nil {
-			return out, nil
-		}
-		for _, f := range unsafe.Slice(entries, n) {
-			out = append(out, toFilter(f))
-		}
-		// Freed whenever Windows returned an array, even an empty one.
-		procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
-		if n == 0 {
-			return out, nil
+		more, err := filterBatch(engine, h, &out)
+		if err != nil || !more {
+			return out, err
 		}
 	}
+}
+
+// filterBatch is providerBatch for filters.
+func filterBatch(engine, h windows.Handle, out *[]wfpFilter) (bool, error) {
+	var entries **fwpmFilter0
+	var n uint32
+	if err := wfpCall(procFwpmFilterEnum0, uintptr(engine), uintptr(h), wfpEnumBatch,
+		uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&n))); err != nil {
+		return false, err
+	}
+	if entries == nil {
+		return false, nil
+	}
+	defer procFwpmFreeMemory0.Call(uintptr(unsafe.Pointer(&entries)))
+	for _, f := range unsafe.Slice(entries, n) {
+		*out = append(*out, toFilter(f))
+	}
+	return n > 0, nil
 }
 
 func toFilter(f *fwpmFilter0) wfpFilter {
