@@ -748,3 +748,64 @@ func TestProbeFailureLoggedOnce(t *testing.T) {
 		t.Fatalf("probe failure logged %d times in two episodes", n)
 	}
 }
+
+// The user follows the warning after the probe window is over: the next
+// lookup finds the kill switch gone, probing starts again, and the link
+// comes up with DNS.
+func TestLinkBlockerGoneProbesAgain(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard, Tunnels: []string{"wg-client-10"}}
+	h.connect(7, alice, config(1))
+	h.tick(probeWindow + 2*time.Minute)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || st.Blocker == nil {
+		t.Fatalf("%+v", st)
+	}
+	probes := h.tun.probes
+	h.tick(time.Minute)
+	if h.tun.probes != probes {
+		t.Fatal("probes after the window")
+	}
+	// A failed lookup is not a change.
+	h.findErr = errors.New("access denied")
+	h.tick(blockerRecheck)
+	if h.tun.probes != probes {
+		t.Fatal("a failed lookup re-armed the probes")
+	}
+	h.findErr = nil
+	h.tick(blockerRecheck)
+	if h.tun.probes != probes {
+		t.Fatal("re-armed while the blocker is still there")
+	}
+	h.blocker = nil // the kill switch is turned off
+	for finds := h.finds; h.finds == finds; {
+		h.tick(time.Second) // until the next lookup
+	}
+	if h.tun.probes != probes {
+		t.Fatal("probed before the lookup")
+	}
+	h.tick(time.Second)
+	if h.tun.probes != probes+1 {
+		t.Fatalf("%d probes after the blocker went, want 1", h.tun.probes-probes)
+	}
+	if st := h.status(alice); st.Blocker != nil || st.Link != ipc.LinkNoAnswer {
+		t.Fatalf("%+v", st)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
+		t.Fatalf("after the handshake: %+v dns=%v", st, h.tun.dns)
+	}
+}
+
+func TestLinkNoBlockerNoRearm(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tick(probeWindow)
+	probes := h.tun.probes
+	h.tick(10 * time.Minute)
+	if h.tun.probes != probes {
+		t.Fatalf("%d probes after the window with no blocker ever found", h.tun.probes-probes)
+	}
+}

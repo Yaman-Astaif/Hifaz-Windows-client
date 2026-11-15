@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -558,6 +559,7 @@ func (e *Engine) checkLink() {
 
 	// Outside the lock: reading the firewall state may take a moment.
 	b, err := e.lookForBlocker()
+	found := err == nil
 	if err != nil {
 		if err.Error() != e.blockerErr { // once, not every minute
 			e.blockerErr = err.Error()
@@ -569,7 +571,13 @@ func (e *Engine) checkLink() {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.owner != o || o.link.state != ipc.LinkNoAnswer || sameBlocker(o.link.blocker, b) {
+	if e.owner != o || o.link.state != ipc.LinkNoAnswer {
+		return
+	}
+	if found && o.link.blockerFound(b, e.now()) {
+		e.log("the block is gone; probing the server again")
+	}
+	if sameBlocker(o.link.blocker, b) {
 		return
 	}
 	o.link.blocker = b
@@ -594,6 +602,8 @@ func (e *Engine) lookForBlocker() (b *ipc.Blocker, err error) {
 			b, err = nil, fmt.Errorf("panic: %v", r)
 		}
 	}()
+	// A fault at a bad address in the system's memory becomes a panic too.
+	defer debug.SetPanicOnFault(debug.SetPanicOnFault(true))
 	return e.findBlocker()
 }
 

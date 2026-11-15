@@ -13,7 +13,9 @@ import (
 // start a handshake, only for probeWindow after sign-in, after a new server
 // key, or after the link went from up to no answer. After that only the
 // user's own traffic makes WireGuard try again, so a session whose
-// handshake never completes still goes idle on the server.
+// handshake never completes still goes idle on the server. A blocker found
+// in the episode going away (a real change in another app's firewall, never
+// a timer) starts one more window.
 //
 // LastHandshake is wall-clock time: a forward clock jump of more than
 // handshakeLost while sending can briefly show no answer, until the next
@@ -52,6 +54,8 @@ type link struct {
 	// The last errors logged, so a failure repeating every second is
 	// logged once: probeErr per probe window, dnsErr until DNS is removed.
 	probeErr, dnsErr string
+	// blockerSeen: a lookup in this no-answer episode found a blocker.
+	blockerSeen bool
 }
 
 // actions are what the engine does after a step.
@@ -72,7 +76,24 @@ func newLink(now time.Time) *link {
 // wait starts waiting again (a new server key resets the handshake).
 func (l *link) wait(now time.Time) {
 	l.state, l.since, l.lastProbe, l.probeArmed, l.probeErr = ipc.LinkWaiting, now, now, now, ""
-	l.sendingSince, l.blocker = time.Time{}, nil
+	l.sendingSince, l.blocker, l.blockerSeen = time.Time{}, nil, false
+}
+
+// blockerFound records a successful lookup's result. When a blocker found
+// earlier in this episode is gone (the user turned the other VPN's kill
+// switch off), a new probe window starts: with DNS off nothing else would
+// make WireGuard handshake. It reports whether it re-armed.
+func (l *link) blockerFound(b *ipc.Blocker, now time.Time) bool {
+	if b != nil {
+		l.blockerSeen = true
+		return false
+	}
+	if !l.blockerSeen {
+		return false
+	}
+	l.blockerSeen = false
+	l.probeArmed, l.probeErr = now, ""
+	return true
 }
 
 // step moves the state on from the tunnel's counters at now.
@@ -93,7 +114,7 @@ func (l *link) step(st Stats, now time.Time) actions {
 		}
 		if !l.sendingSince.IsZero() && now.Sub(l.sendingSince) >= lostGrace {
 			l.noAnswer(now, &a)
-			l.probeArmed, l.probeErr = now, "" // a new episode
+			l.probeArmed, l.probeErr, l.dnsErr = now, "", "" // a new episode
 		}
 	case ipc.LinkWaiting:
 		if fresh {
@@ -121,7 +142,7 @@ func (l *link) step(st Stats, now time.Time) actions {
 }
 
 func (l *link) up() {
-	l.state, l.sendingSince, l.blocker = ipc.LinkUp, time.Time{}, nil
+	l.state, l.sendingSince, l.blocker, l.blockerSeen = ipc.LinkUp, time.Time{}, nil, false
 }
 
 func (l *link) noAnswer(now time.Time, a *actions) {

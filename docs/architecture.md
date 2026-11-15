@@ -115,12 +115,17 @@ and the bytes sent:
 
 Probes are bounded: one every 10 seconds, only while waiting or with no
 answer, and only for 90 seconds (`probeWindow`, WireGuard's own limit for
-handshake retries) after sign-in, after a new server key, or after the link
-went from up to no answer. They are never re-armed by a timer. The server
+handshake retries) after sign-in, after a new server key, after the link
+went from up to no answer, or when a blocker found while there was no
+answer is gone (the user turned the other VPN's kill switch off; with DNS
+off nothing else would start a handshake). They are never re-armed by a
+timer, and a blocker going away re-arms them once per change. The server
 counts received handshake initiations as activity, so endless probing could
 keep a session whose handshake never completes from going idle (protocol
 section 8). After the window only the user's own traffic makes WireGuard try
-again, and a handshake then still brings Connected and DNS back.
+again, and a handshake then still brings Connected and DNS back; with no
+blocker found, the general text tells the user to sign out and in once the
+cause is fixed.
 
 A new server key in a configuration starts waiting again. Idle, the time
 limit, sign-out and the rest end the tunnel as before. A kill switch turned
