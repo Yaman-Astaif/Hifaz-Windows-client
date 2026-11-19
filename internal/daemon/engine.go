@@ -221,6 +221,11 @@ func (e *Engine) statusLocked(c Caller) *ipc.Status {
 	}
 	s.ConnectedAt = e.owner.connectedAt
 	s.Link, s.Blocker = e.owner.link.state, e.owner.link.blocker
+	dnsActive := e.owner.link.dnsOn && len(e.owner.cfg.DNSServers) > 0
+	for _, address := range e.owner.cfg.DNSServers {
+		s.DNSServers = append(s.DNSServers, address.String())
+	}
+	s.DNSActive = &dnsActive
 	if st, err := e.tunnel.Stats(); err == nil {
 		s.LastHandshake, s.RxBytes, s.TxBytes = st.LastHandshake, st.RxBytes, st.TxBytes
 	}

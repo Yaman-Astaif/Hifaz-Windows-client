@@ -30,14 +30,15 @@ const (
 // View is everything the window needs to draw itself. The app sends a new
 // View after every change; the window keeps no state of its own.
 type View struct {
-	Screen  Screen       `json:"screen"`
-	Busy    bool         `json:"busy"`
-	Error   *ViewError   `json:"error,omitempty"`
-	Notice  string       `json:"notice,omitempty"` // why a session ended, for example "idle"
-	Account *AccountView `json:"account,omitempty"`
-	Enroll  *EnrollView  `json:"enroll,omitempty"`
-	Session *SessionView `json:"session,omitempty"`
-	Update  *UpdateView  `json:"update,omitempty"`
+	Screen        Screen       `json:"screen"`
+	ServiceStatus string       `json:"service_status,omitempty"`
+	Busy          bool         `json:"busy"`
+	Error         *ViewError   `json:"error,omitempty"`
+	Notice        string       `json:"notice,omitempty"` // why a session ended, for example "idle"
+	Account       *AccountView `json:"account,omitempty"`
+	Enroll        *EnrollView  `json:"enroll,omitempty"`
+	Session       *SessionView `json:"session,omitempty"`
+	Update        *UpdateView  `json:"update,omitempty"`
 	// Replacing: the user is adding a server while one is enrolled; the
 	// old one is removed when the new enrollment succeeds.
 	Replacing bool `json:"replacing,omitempty"`
@@ -85,6 +86,8 @@ type SessionView struct {
 	Address       string    `json:"address,omitempty"`
 	AllowedIPs    []string  `json:"allowed_ips,omitempty"`
 	LastHandshake time.Time `json:"last_handshake,omitzero"`
+	DNSActive     *bool     `json:"dns_active,omitempty"`
+	DNSServers    []string  `json:"dns_servers,omitempty"`
 	RxBytes       uint64    `json:"rx_bytes"`
 	TxBytes       uint64    `json:"tx_bytes"`
 	// Link: "waiting" for the server's first answer, "up", or "no_answer";

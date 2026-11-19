@@ -147,6 +147,7 @@
       </label>
       <div class="actions">
         <button class="btn" type="submit" data-t="connect"></button>
+        <button class="btn text-action" type="button" data-page-go="diagnostics" data-t="diagnostics"></button>
       </div>
     </form>
   </section>
@@ -166,25 +167,53 @@
     </form>
   </section>
 
-  <!-- Connected -->
-  <section data-screen="connected" aria-live="polite">
-    <div class="card">
-      <p class="ok" data-show="session.up"><span class="dot" aria-hidden="true"></span><span data-t="connected"></span></p>
-      <p class="ok waiting" data-show="session.waiting" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkWaiting"></span></p>
-      <p class="ok no-answer" data-show="session.no_answer" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkNoAnswer"></span></p>
-      <p class="warn" data-field="session.blocker_text" data-show="session.blocker_text" hidden></p>
-      <dl>
-        <dt data-t="server"></dt><dd class="mono" data-field="account.host"></dd>
-        <dt data-t="user"></dt><dd class="mono" data-field="account.username"></dd>
-        <dt data-t="vpnAddress"></dt><dd class="mono" data-field="session.address"></dd>
-        <dt data-t="connectedSince"></dt><dd data-field="session.connected_at_text"></dd>
-        <dt data-t="sessionEnds"></dt><dd data-field="session.expires_at_text"></dd>
-        <dt data-t="traffic"></dt><dd class="mono" data-field="session.traffic_text"></dd>
-        <dt data-t="routes"></dt><dd class="mono routes" data-field="session.routes_text"></dd>
-      </dl>
-      <p class="note" data-field="session.idle_note"></p>
+  <section data-screen="connected">
+    <div class="card connection">
+      <div class="connection-status" aria-live="polite">
+        <h1 class="ok" data-show="session.up"><span class="dot" aria-hidden="true"></span><span data-t="connected"></span></h1>
+        <h1 class="ok waiting" data-show="session.waiting" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkWaiting"></span></h1>
+        <h1 class="ok no-answer" data-show="session.no_answer" hidden><span class="dot" aria-hidden="true"></span><span data-t="linkNoAnswer"></span></h1>
+        <p data-field="connection.account" dir="auto"></p>
+        <p class="warn" data-field="session.blocker_text" data-show="session.blocker_text" hidden></p>
+      </div>
+      <button class="btn text-action" type="button" data-page-go="diagnostics" data-show="session.no_answer" data-t="openDiagnostics" hidden></button>
+      <p class="hint" data-show="session.expires_at_text"><span data-t="sessionEnds"></span> <span data-field="session.expires_at_text"></span></p>
+      <p class="hint" data-field="session.idle_note" data-show="session.idle_note"></p>
       <div class="actions">
-        <button class="btn alt" type="button" data-act="disconnect" data-t="disconnect"></button>
+        <button class="btn" type="button" data-act="disconnect" data-t="disconnect"></button>
+        <button class="btn text-action" type="button" data-page-go="diagnostics" data-show="connection.diagnostics_link" data-t="diagnostics"></button>
+      </div>
+    </div>
+  </section>
+
+  <section data-page="diagnostics" hidden>
+    <h1 data-t="diagnostics"></h1>
+    <div class="card diagnostic-card">
+      <dl>
+        <dt data-t="diagnosticsService"></dt><dd data-field="diagnostics.service"></dd>
+        <dt data-t="lastHandshake"></dt><dd data-field="diagnostics.handshake"></dd>
+        <dt data-t="diagnosticsDNS"></dt><dd data-field="diagnostics.dns"></dd>
+      </dl>
+      <p class="warn" data-field="session.blocker_text" data-show="session.blocker_text" hidden></p>
+      <details data-show="session.address" hidden>
+        <summary data-t="diagnosticsNetwork"></summary>
+        <dl>
+          <dt data-t="vpnAddress"></dt><dd class="mono" data-field="session.address"></dd>
+          <dt data-t="connectedSince"></dt><dd data-field="session.connected_at_text"></dd>
+          <dt data-t="traffic"></dt><dd class="mono" data-field="session.traffic_text"></dd>
+          <dt data-t="diagnosticsDNSServers" data-show="session.dns_servers" hidden></dt><dd class="mono routes" data-field="session.dns_servers" data-show="session.dns_servers" hidden></dd>
+          <dt data-t="routes"></dt><dd class="mono routes" data-field="session.routes_text"></dd>
+        </dl>
+      </details>
+      <details id="support-summary">
+        <summary data-t="diagnosticsPreview"></summary>
+        <p class="hint" data-t="diagnosticsRedacted"></p>
+        <pre dir="auto" data-field="diagnostics.report"></pre>
+        <button id="copy-diagnostics" class="btn alt" type="button" data-t="diagnosticsCopy"></button>
+        <p id="copy-result" class="hint" role="status"></p>
+      </details>
+      <div class="actions">
+        <button class="btn" type="button" id="diagnostics-back" data-t="back"></button>
       </div>
     </div>
   </section>
@@ -215,6 +244,7 @@
           <option value="dark" data-t="themeDark"></option>
         </select>
       </label>
+      <label class="inline check"><input id="p-notifications" type="checkbox"><span data-t="connectionNotifications"></span></label>
       <label class="inline check"><input id="p-autostart" type="checkbox"><span data-t="autostart"></span></label>
     </div>
     <h2 data-t="thisDevice" data-show="account"></h2>
@@ -229,7 +259,8 @@
       <button class="btn alt" type="button" data-act="add_server" data-t="addServer"></button>
       <button id="b-remove" class="btn alt danger" type="button" data-t="removeDevice"></button>
     </div>
-    <button class="btn alt back" type="button" data-page-go="about" data-t="about"></button>
+    <button class="btn alt back" type="button" data-page-go="diagnostics" data-t="diagnostics"></button>
+    <button class="btn alt" type="button" data-page-go="about" data-t="about"></button>
     <div class="actions">
       <button class="btn" type="button" data-page-go="" data-t="done"></button>
     </div>

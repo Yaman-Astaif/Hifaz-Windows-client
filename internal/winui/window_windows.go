@@ -62,10 +62,13 @@ type windowHost struct {
 	webview *edge.Chromium
 	prefs   Prefs
 
-	icons          [2]windows.Handle // tray: [not connected, connected]
-	appIcons       [2]windows.Handle // the window's: [small, big]
-	trayAdded      bool
-	taskbarCreated uint32
+	icons               [2]windows.Handle // tray: [not connected, connected]
+	appIcons            [2]windows.Handle // the window's: [small, big]
+	trayAdded           bool
+	lastTrayView        app.View
+	blockedNotification bool
+	notificationPage    string
+	taskbarCreated      uint32
 
 	quitting          bool
 	moving            bool
@@ -499,8 +502,18 @@ func (h *windowHost) eval(fn string, v any) {
 }
 
 func (h *windowHost) pushView() {
-	h.eval("onView", views.get())
+	v := views.get()
+	h.eval("onView", v)
 	h.updateTray()
+	key, page := connectionNotification(h.lastTrayView, v, h.blockedNotification)
+	h.lastTrayView = v
+	if v.Screen != app.ScreenConnected || key == "notifyRestored" {
+		h.blockedNotification = false
+	}
+	iconic, _, _ := pIsIconic.Call(uintptr(h.hwnd))
+	if key != "" && h.prefs.Notifications && (!h.visible() || iconic != 0) && h.showNotification(key, page) {
+		h.blockedNotification = key == "notifyBlocked"
+	}
 }
 
 func (h *windowHost) pushPrefs() { h.eval("onPrefs", h.prefs) }
@@ -512,6 +525,9 @@ func (h *windowHost) pushApp() {
 
 func (h *windowHost) setPrefs(p Prefs) {
 	h.prefs = p
+	if !p.Notifications {
+		h.blockedNotification = false
+	}
 	if err := SavePrefs(h.o.PrefsPath, p); err != nil {
 		h.o.Log("saving preferences failed", "err", err)
 	}
@@ -563,8 +579,29 @@ func (h *windowHost) removeTray() {
 	}
 }
 
+func (h *windowHost) showNotification(key, page string) bool {
+	if !h.trayAdded {
+		return false
+	}
+	d := h.trayData()
+	d.Flags = nifInfo
+	d.InfoFlags = 1 | 0x80 // NIIF_INFO | NIIF_RESPECT_QUIET_TIME
+	message, _ := windows.UTF16FromString(text(h.prefs.Lang, key))
+	title, _ := windows.UTF16FromString(text(h.prefs.Lang, "notifyTitle"))
+	copy(d.Info[:len(d.Info)-1], message)
+	copy(d.InfoTitle[:len(d.InfoTitle)-1], title)
+	if r, _, _ := pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(d))); r == 0 {
+		return false
+	}
+	h.notificationPage = page
+	return true
+}
+
 func (h *windowHost) onTray(event uint32) {
 	switch event {
+	case ninBalloonUserClick:
+		h.show()
+		h.eval("showPage", h.notificationPage)
 	case ninSelect, ninKeySelect, wmLButtonUp:
 		if h.visible() {
 			h.hide()

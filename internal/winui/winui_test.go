@@ -153,3 +153,30 @@ func TestTrayState(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionNotification(t *testing.T) {
+	up := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "up"}}
+	blocked := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{
+		Link: "no_answer", Blocker: &app.BlockerView{App: "wireguard"},
+	}}
+	for _, tc := range []struct {
+		name          string
+		before, after app.View
+		notified      bool
+		key, page     string
+	}{
+		{"blocker", up, blocked, false, "notifyBlocked", "diagnostics"},
+		{"repeat", blocked, blocked, true, "", ""},
+		{"recovery", blocked, up, true, "notifyRestored", "diagnostics"},
+		{"unannounced recovery", blocked, up, false, "", ""},
+		{"expiration", up, app.View{Screen: app.ScreenSignIn, Notice: "time_limit"}, false, "notifyExpired", ""},
+		{"error", up, app.View{Screen: app.ScreenSignIn, Error: &app.ViewError{Code: "network"}}, false, "notifyLost", "diagnostics"},
+		{"sign-out", up, app.View{Screen: app.ScreenSignIn}, false, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if key, page := connectionNotification(tc.before, tc.after, tc.notified); key != tc.key || page != tc.page {
+				t.Fatalf("got %q, %q; want %q, %q", key, page, tc.key, tc.page)
+			}
+		})
+	}
+}

@@ -156,8 +156,10 @@ type Status struct {
 	TxBytes       uint64    `json:"tx_bytes,omitempty"`
 	// Link and Blocker: whether the server answers, and if not, why (when
 	// known).
-	Link    Link     `json:"link,omitempty"`
-	Blocker *Blocker `json:"blocker,omitempty"`
+	Link       Link     `json:"link,omitempty"`
+	Blocker    *Blocker `json:"blocker,omitempty"`
+	DNSActive  *bool    `json:"dns_active,omitempty"`
+	DNSServers []string `json:"dns_servers,omitempty"`
 	// LastError is the code of the last failure or end reason seen by the
 	// caller's tunnel, for example "full_tunnel" or "idle".
 	LastError string `json:"last_error,omitempty"`

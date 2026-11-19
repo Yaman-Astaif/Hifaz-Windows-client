@@ -159,6 +159,7 @@ func (c *Controller) setView(v View) {
 	if v.Account == nil && c.account != nil {
 		v.Account = accountView(c.account)
 	}
+	v.ServiceStatus = c.view.ServiceStatus
 	c.view = v
 	c.show()
 }
@@ -227,6 +228,13 @@ func (c *Controller) Do(a Action) {
 	f := func() {
 		switch a.Name {
 		case "refresh":
+			c.show()
+		case "diagnostics":
+			_, err := c.o.Service.Status()
+			c.view.ServiceStatus = "diagnosticsServiceRunning"
+			if err != nil {
+				c.view.ServiceStatus = "diagnosticsServiceUnavailable"
+			}
 			c.show()
 		case "enroll_link":
 			c.enrollLink(a.Link)
@@ -801,7 +809,7 @@ func sessionView(s *protocol.Session, st *ipc.Status) *SessionView {
 	if st != nil {
 		v.ConnectedAt, v.Address, v.AllowedIPs = st.ConnectedAt, st.Address, st.AllowedIPs
 		v.LastHandshake, v.RxBytes, v.TxBytes = st.LastHandshake, st.RxBytes, st.TxBytes
-		v.Link = string(st.Link)
+		v.Link, v.DNSActive, v.DNSServers = string(st.Link), st.DNSActive, st.DNSServers
 		if b := st.Blocker; b != nil {
 			v.Blocker = &BlockerView{App: b.App, Tunnels: slices.Clone(b.Tunnels)}
 		}
