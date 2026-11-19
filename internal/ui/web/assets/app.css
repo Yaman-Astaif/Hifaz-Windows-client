@@ -30,7 +30,8 @@ main {
   scroll-padding-bottom: 140px;
 }
 main > section { padding-bottom: 16px; }
-main > section[data-page] { padding-bottom: 0; } /* its bar has the space */
+main > section[data-page],
+main > section[data-screen="enroll_mfa"] { padding-bottom: 0; } /* the action bar supplies the space */
 /* Tighter than the web pages, so most screens fit without scrolling. */
 h1 { margin: 0 0 2px; }
 .sub { margin: 0 0 14px; }
