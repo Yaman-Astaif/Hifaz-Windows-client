@@ -260,6 +260,13 @@ try {
     check(Object.values(result).every(Boolean), `Diagnostics opens, redacts details, and returns, ${lang}`);
   }
 
+  const codes = await cdp.evaluate(`Array.from(document.querySelectorAll("input.code"), (field) => {
+    field.value = "a٠1۲-3٤۵x6";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field.value;
+  })`);
+  check(codes.length === 4 && codes.every((code) => code === "012345"), "all code fields keep six digits and accept Arabic numerals");
+
   // Back to the first screen, as the app left it.
   await cdp.send("Emulation.clearDeviceMetricsOverride");
   await show({ screen: "setup" }, "", { lang: "ar", theme: "light" });

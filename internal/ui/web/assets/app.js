@@ -126,12 +126,16 @@
     put("diagnostics.service", service);
     put("diagnostics.handshake", handshake);
     put("diagnostics.dns", dns);
+    const manualSignOut = view.notice === "signed_out_here" || view.notice === "signed_out_from_tray";
+    const notice = !manualSignOut && view.notice && window.I18N.has(view.notice) ? t(view.notice) : "";
+    put("diagnostics.last_issue", notice || errorText(view.error));
     put("diagnostics.report", [
       app.version ? "Hifaz " + app.version : "Hifaz",
       t("diagnosticsService") + ": " + service,
       t("diagnosticsState") + ": " + connection,
       t("lastHandshake") + ": " + handshake,
       t("diagnosticsDNS") + ": " + dns,
+      ...(notice ? [t("diagnosticsLastIssue") + ": " + notice] : []),
       ...(s && s.blocker && s.blocker.app === "wireguard" ? ["WireGuard: " + t("linkNoAnswer")] : []),
     ].join("\n"));
     const u = view.update;
@@ -259,6 +263,12 @@
   }
 
   // --- user actions ----------------------------------------------------------------
+
+  all("input.code").forEach((field) => field.addEventListener("input", () => {
+    const digits = field.value.replace(/[٠-٩۰-۹]/g, (digit) =>
+      String(digit.charCodeAt(0) & 15)).replace(/[^0-9]/g, "").slice(0, 6);
+    if (digits !== field.value) field.value = digits;
+  }));
 
   function onSubmit(id, f) {
     $(id).addEventListener("submit", (ev) => { ev.preventDefault(); if (!view.busy) { acted = true; f(); } });

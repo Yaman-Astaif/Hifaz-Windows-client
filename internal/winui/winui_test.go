@@ -180,10 +180,13 @@ func TestConnectionNotification(t *testing.T) {
 		{"unannounced recovery", blocked, up, true, true, false, "", ""},
 		{"expiration", up, signIn("time_limit"), false, true, false, "notifyExpired", ""},
 		{"admin termination", up, signIn("ended_by_admin"), false, true, false, "notifyAdminEnded", ""},
+		{"disabled user", up, signIn("user_disabled"), true, true, false, "notifyAccessDisabled", ""},
+		{"remote sign-out", up, signIn("signed_out"), true, true, false, "notifyServerEnded", ""},
+		{"invalid session", up, app.View{Screen: app.ScreenSignIn, Error: &app.ViewError{Code: "invalid_session"}}, false, true, false, "notifyServerEnded", ""},
 		{"background error", up, lost, true, true, false, "notifyLost", "diagnostics"},
 		{"foreground error", up, lost, false, true, false, "", ""},
 		{"tray sign-out", up, signIn("signed_out_from_tray"), true, true, false, "notifyDisconnected", ""},
-		{"window sign-out", up, signIn("signed_out"), true, true, false, "", ""},
+		{"window sign-out", up, signIn("signed_out_here"), true, true, false, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if key, page := connectionNotification(tc.before, tc.after, tc.background, tc.wasUp, tc.notified); key != tc.key || page != tc.page {

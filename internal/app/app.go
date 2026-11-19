@@ -262,7 +262,7 @@ func (c *Controller) Do(a Action) {
 				return
 			}
 			c.endSession(true, "")
-			v := View{Screen: ScreenSignIn, Notice: "signed_out"}
+			v := View{Screen: ScreenSignIn, Notice: "signed_out_here"}
 			if a.Name == "disconnect_from_tray" {
 				v.Notice = "signed_out_from_tray"
 			}
@@ -415,6 +415,18 @@ func (c *Controller) enrollConfirmFingerprint() {
 	c.setView(View{Screen: ScreenEnrollPassword, Enroll: c.enrollView(), Replacing: c.enroll.replacing})
 }
 
+// checkOTP rejects incomplete codes before an authentication request.
+func (c *Controller) checkOTP(code string, optional bool) bool {
+	if optional && code == "" {
+		return true
+	}
+	if len(code) == 6 && strings.IndexFunc(code, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		return true
+	}
+	c.fail(&protocol.APIError{Code: "code_six_digits"})
+	return false
+}
+
 func (c *Controller) enrollPassword(password, otp, deviceName string) {
 	e := c.enroll
 	if e == nil {
@@ -422,14 +434,18 @@ func (c *Controller) enrollPassword(password, otp, deviceName string) {
 	}
 	// Two-step verification is set up: an empty code would only count
 	// toward the lockout on the server, so it is refused here.
-	if e.codeRequired && strings.TrimSpace(otp) == "" {
+	otp = strings.TrimSpace(otp)
+	if e.codeRequired && otp == "" {
 		c.fail(errCodeRequired)
+		return
+	}
+	if !c.checkOTP(otp, !e.codeRequired) {
 		return
 	}
 	c.setBusy(true)
 	ctx, cancel := c.ctx()
 	defer cancel()
-	st, err := e.client.EnrollStart(ctx, e.link.Token, password, strings.TrimSpace(otp))
+	st, err := e.client.EnrollStart(ctx, e.link.Token, password, otp)
 	if err != nil {
 		c.enrollFail(err)
 		return
@@ -449,10 +465,14 @@ func (c *Controller) enrollMFA(code, deviceName string) {
 	if e == nil || e.stepToken == "" {
 		return
 	}
+	code = strings.TrimSpace(code)
+	if !c.checkOTP(code, false) {
+		return
+	}
 	c.setBusy(true)
 	ctx, cancel := c.ctx()
 	defer cancel()
-	if err := e.client.EnrollMFA(ctx, e.stepToken, strings.TrimSpace(code)); err != nil {
+	if err := e.client.EnrollMFA(ctx, e.stepToken, code); err != nil {
 		c.enrollFail(err)
 		return
 	}
@@ -638,9 +658,13 @@ func (c *Controller) credentials() (*protocol.Client, *keystore.Secrets, *protoc
 }
 
 func (c *Controller) signIn(password, otp string) {
+	otp = strings.TrimSpace(otp)
+	if !c.checkOTP(otp, true) {
+		return
+	}
 	c.startSession(nil, func(ctx context.Context, client *protocol.Client, auth protocol.Auth, wgPublic string) (*protocol.LoginResult, error) {
 		return client.Login(ctx, auth, protocol.LoginRequest{Username: c.account.Username,
-			Password: password, OTP: strings.TrimSpace(otp), WGPublicKey: wgPublic})
+			Password: password, OTP: otp, WGPublicKey: wgPublic})
 	})
 }
 
@@ -651,10 +675,14 @@ func (c *Controller) signInOTP(otp string) {
 		c.setView(View{Screen: ScreenSignIn})
 		return
 	}
+	otp = strings.TrimSpace(otp)
+	if !c.checkOTP(otp, false) {
+		return
+	}
 	// The WireGuard key was announced with the password; the server keeps it
 	// for this step.
 	c.startSession(step, func(ctx context.Context, client *protocol.Client, auth protocol.Auth, _ string) (*protocol.LoginResult, error) {
-		return client.LoginOTP(ctx, auth, step.stepToken, strings.TrimSpace(otp))
+		return client.LoginOTP(ctx, auth, step.stepToken, otp)
 	})
 }
 

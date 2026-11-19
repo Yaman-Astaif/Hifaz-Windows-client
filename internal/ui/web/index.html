@@ -92,7 +92,7 @@
       </label>
       <p class="hint start" data-t="codeRequiredNote" data-show="enroll.code_required" hidden></p>
       <label><span data-t="code"></span> <span class="opt" data-t="codeOptional" data-show="enroll.code_optional"></span>
-        <input id="e-otp" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
+        <input id="e-otp" class="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" placeholder="000000">
       </label>
       <label data-show="enroll.name_editable" hidden><span data-t="devName"></span>
         <input id="e-name" maxlength="64" autocomplete="off" spellcheck="false">
@@ -119,7 +119,7 @@
       <canvas id="qr" class="qr" width="180" height="180" role="img" data-t-label="qrLabel"></canvas>
       <p class="secret" data-field="enroll.mfa_secret_spaced"></p>
       <label><span data-t="code"></span>
-        <input id="m-code" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" required>
+        <input id="m-code" class="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" placeholder="000000" required>
       </label>
       <div class="actions actions-split">
         <button class="btn" type="submit" data-t="confirm"></button>
@@ -143,7 +143,7 @@
         <input id="s-password" class="ltr" type="password" autocomplete="off" required>
       </label>
       <label><span data-t="code"></span> <span class="opt" data-t="codeOptional"></span>
-        <input id="s-otp" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
+        <input id="s-otp" class="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" placeholder="000000">
       </label>
       <div class="actions">
         <button class="btn" type="submit" data-t="signInTitle"></button>
@@ -158,7 +158,7 @@
     <p class="sub" data-t="otpSub"></p>
     <form id="f-otp" class="card" novalidate>
       <label><span data-t="code"></span>
-        <input id="o-code" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" required>
+        <input id="o-code" class="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="off" placeholder="000000" required>
       </label>
       <div class="actions">
         <button class="btn" type="submit" data-t="connect"></button>
@@ -193,6 +193,7 @@
         <dt data-t="diagnosticsService"></dt><dd data-field="diagnostics.service"></dd>
         <dt data-t="lastHandshake"></dt><dd data-field="diagnostics.handshake"></dd>
         <dt data-t="diagnosticsDNS"></dt><dd data-field="diagnostics.dns"></dd>
+        <dt data-t="diagnosticsLastIssue" data-show="diagnostics.last_issue" hidden></dt><dd data-field="diagnostics.last_issue" data-show="diagnostics.last_issue" hidden></dd>
       </dl>
       <p class="warn" data-field="session.blocker_text" data-show="session.blocker_text" hidden></p>
       <details data-show="session.address" hidden>

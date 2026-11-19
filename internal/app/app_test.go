@@ -822,6 +822,21 @@ func TestEnrollStepExpiredWhileReplacing(t *testing.T) {
 
 // --- the sign-in code step ---------------------------------------------------------
 
+func TestSignInOTPRejectsMalformedCodeAndKeepsStep(t *testing.T) {
+	h := newHarness(t)
+	defer h.stop()
+	h.enroll()
+	h.toCodeScreen()
+	for _, code := range []string{"12abc3", "01234", "0123456"} {
+		h.ctrl.Do(Action{Name: "signin_otp", OTP: code})
+		if v := h.waitErrorView(); v.Screen != ScreenSignInOTP || v.Error.Code != "code_six_digits" {
+			t.Fatalf("malformed code: got %+v", v)
+		}
+	}
+	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
+	h.wait(ScreenConnected)
+}
+
 // toCodeScreen signs in with the password and waits for the code screen.
 func (h *harness) toCodeScreen() {
 	h.t.Helper()
