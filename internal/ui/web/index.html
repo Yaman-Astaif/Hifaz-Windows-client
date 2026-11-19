@@ -18,7 +18,7 @@
       <span class="brand-name"><span lang="en">Hifaz</span><span class="sep">-</span><span lang="ar">حِفاظ</span></span>
     </div>
     <div class="top-actions">
-      <button id="b-settings" class="theme" type="button" data-t-label="settings">
+      <button id="b-settings" class="theme" type="button" aria-expanded="false" aria-controls="settings-page" data-t-label="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
       <button id="theme" class="theme" type="button" data-t-label="theme">
@@ -66,8 +66,9 @@
       </dl>
       <p class="pw fp" data-field="enroll.fingerprint_display"></p>
       <p class="hint start" data-t="fpHint"></p>
-      <div class="actions">
+      <div class="actions actions-split">
         <button class="btn" type="button" data-act="enroll_confirm_fingerprint" data-t="fpMatches"></button>
+        <button class="btn alt" type="button" data-act="enroll_back" data-t="back"></button>
         <button class="btn alt" type="button" data-act="enroll_cancel" data-t="fpDiffers"></button>
       </div>
     </div>
@@ -97,8 +98,9 @@
         <input id="e-name" maxlength="64" autocomplete="off" spellcheck="false">
         <span class="opt" data-t="devNameHint"></span>
       </label>
-      <div class="actions">
+      <div class="actions actions-split">
         <button class="btn" type="submit" data-t="continue"></button>
+        <button class="btn alt" type="button" data-act="enroll_back" data-t="back"></button>
         <button class="btn alt" type="button" data-act="enroll_cancel" data-t="cancel"></button>
       </div>
     </form>
@@ -119,8 +121,10 @@
       <label><span data-t="code"></span>
         <input id="m-code" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" required>
       </label>
-      <div class="actions">
+      <div class="actions actions-split">
         <button class="btn" type="submit" data-t="confirm"></button>
+        <button class="btn alt" type="button" data-act="enroll_back" data-t="back"></button>
+        <button class="btn alt" type="button" data-act="enroll_cancel" data-t="cancel"></button>
       </div>
     </form>
   </section>
@@ -157,7 +161,7 @@
       </label>
       <div class="actions">
         <button class="btn" type="submit" data-t="connect"></button>
-        <button class="btn alt" type="button" data-act="signin_cancel" data-t="cancel"></button>
+        <button class="btn alt" type="button" data-act="signin_cancel" data-t="back"></button>
       </div>
     </form>
   </section>
@@ -198,7 +202,7 @@
   </section>
 
   <!-- Settings (a page of the window, not a state of the app) -->
-  <section data-page="settings" hidden>
+  <section id="settings-page" data-page="settings" hidden>
     <h1 data-t="settings"></h1>
     <div class="card">
       <label class="inline"><span data-t="language"></span>
@@ -227,7 +231,7 @@
     </div>
     <button class="btn alt back" type="button" data-page-go="about" data-t="about"></button>
     <div class="actions">
-      <button class="btn" type="button" data-page-go="" data-t="back"></button>
+      <button class="btn" type="button" data-page-go="" data-t="done"></button>
     </div>
   </section>
 

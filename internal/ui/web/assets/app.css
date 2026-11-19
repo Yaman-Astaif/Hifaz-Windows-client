@@ -87,6 +87,13 @@ label.inline.check input { width: 18px; height: 18px; margin: 0; accent-color: v
   background: var(--bg);
   border-top: 1px solid transparent;
 }
+.actions-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.actions-split > .btn:first-child { grid-column: 1 / -1; }
+.actions-split > .btn + .btn { margin-top: 0; }
 /* In a card: the card's own colour, out to its padding and down to its
    rounded bottom (the card is 16px 18px padding, 12px radius, 1px border).
    The buttons sit as far below the last field as on the web pages. */
