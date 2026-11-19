@@ -43,12 +43,12 @@ func placement(dpi int, frameW, frameH int32, work rect) rect {
 // new monitor's work area, and the user cannot resize the window. So it
 // keeps the suggested place, takes the fixed size for the new DPI (clamped
 // to the work area, as placement does), and moves back inside the work
-// area if it sticks out. An empty work area (unknown) moves nothing.
-func dpiChanged(suggested rect, dpi int, frameW, frameH int32, work rect) rect {
+// area if it sticks out. During a drag, Windows controls the position.
+func dpiChanged(suggested rect, dpi int, frameW, frameH int32, work rect, moving bool) rect {
 	p := placement(dpi, frameW, frameH, work)
 	w, h := p.Right-p.Left, p.Bottom-p.Top
 	x, y := suggested.Left, suggested.Top
-	if !work.empty() {
+	if !moving && !work.empty() {
 		x = max(work.Left, min(x, work.Right-w))
 		y = max(work.Top, min(y, work.Bottom-h))
 	}

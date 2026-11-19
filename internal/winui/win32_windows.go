@@ -43,6 +43,8 @@ var (
 	pSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	pSetWindowPos                  = user32.NewProc("SetWindowPos")
 	pMessageBoxW                   = user32.NewProc("MessageBoxW")
+	pGetWindowRect                 = user32.NewProc("GetWindowRect")
+	pIsIconic                      = user32.NewProc("IsIconic")
 	pGetClientRect                 = user32.NewProc("GetClientRect")
 	pMonitorFromWindow             = user32.NewProc("MonitorFromWindow")
 	pMonitorFromRect               = user32.NewProc("MonitorFromRect")
@@ -66,6 +68,8 @@ const (
 	wmNull            = 0x0000
 	wmContextMenu     = 0x007B
 	wmLButtonUp       = 0x0202
+	wmEnterSizeMove   = 0x0231
+	wmExitSizeMove    = 0x0232
 	wmDpiChanged      = 0x02E0
 	wmApp             = 0x8000
 

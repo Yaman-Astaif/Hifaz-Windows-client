@@ -67,7 +67,10 @@ type windowHost struct {
 	trayAdded      bool
 	taskbarCreated uint32
 
-	quitting bool
+	quitting          bool
+	moving            bool
+	dpiChangedOnMove  bool
+	dpiPendingRestore bool
 }
 
 // Run shows the window (unless Background) and runs the message loop until
@@ -208,6 +211,22 @@ func (h *windowHost) placeWindow() {
 		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
 }
 
+// applyDPI sizes the window for its monitor while keeping the cursor-relative
+// position Windows supplies during a drag.
+func (h *windowHost) applyDPI(s rect, dpi int) {
+	fw, fh := frame(dpi)
+	r := dpiChanged(s, dpi, fw, fh, workAreaAt(s), h.moving)
+	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(r.Left), uintptr(r.Top),
+		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+}
+
+func (h *windowHost) fitCurrentMonitor() {
+	var r rect
+	if ok, _, _ := pGetWindowRect.Call(uintptr(h.hwnd), uintptr(unsafe.Pointer(&r))); ok != 0 {
+		h.applyDPI(r, h.dpi())
+	}
+}
+
 // makeIcons draws the icons for the window's current scaling. The old ones
 // are destroyed only once the window (and, after updateTray, the shell)
 // holds the new ones.
@@ -305,6 +324,11 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 			pShowWindow.Call(uintptr(hwnd), swRestore)
 			return 0
 		}
+		if w == 0 /* SIZE_RESTORED */ && h.dpiPendingRestore {
+			h.dpiPendingRestore = false // SetWindowPos can send WM_SIZE again.
+			h.fitCurrentMonitor()
+			h.makeIcons()
+		}
 		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
 		return 0
 	case wmSysCommand:
@@ -312,15 +336,22 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		if !allowSysCommand(w) {
 			return 0
 		}
+	case wmEnterSizeMove:
+		h.moving = true
+	case wmExitSizeMove:
+		h.moving = false
+		if h.dpiChangedOnMove {
+			h.dpiChangedOnMove = false
+			h.fitCurrentMonitor()
+		}
 	case wmDpiChanged:
-		// The place Windows suggests for the new monitor, but the fixed
-		// size for its DPI, inside its work area (see dpiChanged).
-		dpi := int(w >> 16 & 0xffff)
-		fw, fh := frame(dpi)
-		s := *(*rect)(osPointer(l))
-		r := dpiChanged(s, dpi, fw, fh, workAreaAt(s))
-		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
-			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+		if iconic, _, _ := pIsIconic.Call(uintptr(hwnd)); iconic != 0 {
+			h.dpiPendingRestore = true
+			return 0
+		}
+		h.dpiPendingRestore = false
+		h.dpiChangedOnMove = h.moving
+		h.applyDPI(*(*rect)(osPointer(l)), int(w>>16&0xffff))
 		h.makeIcons()
 		return 0
 	case wmClose:
