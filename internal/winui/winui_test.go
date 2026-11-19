@@ -156,26 +156,45 @@ func TestTrayState(t *testing.T) {
 
 func TestConnectionNotification(t *testing.T) {
 	up := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "up"}}
+	waiting := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "waiting"}}
+	noAnswer := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{Link: "no_answer"}}
 	blocked := app.View{Screen: app.ScreenConnected, Session: &app.SessionView{
 		Link: "no_answer", Blocker: &app.BlockerView{App: "wireguard"},
 	}}
+	signIn := func(notice string) app.View { return app.View{Screen: app.ScreenSignIn, Notice: notice} }
+	lost := app.View{Screen: app.ScreenSignIn, Error: &app.ViewError{Code: "network"}}
 	for _, tc := range []struct {
-		name          string
-		before, after app.View
-		notified      bool
-		key, page     string
+		name                        string
+		before, after               app.View
+		background, wasUp, notified bool
+		key, page                   string
 	}{
-		{"blocker", up, blocked, false, "notifyBlocked", "diagnostics"},
-		{"repeat", blocked, blocked, true, "", ""},
-		{"recovery", blocked, up, true, "notifyRestored", "diagnostics"},
-		{"unannounced recovery", blocked, up, false, "", ""},
-		{"expiration", up, app.View{Screen: app.ScreenSignIn, Notice: "time_limit"}, false, "notifyExpired", ""},
-		{"error", up, app.View{Screen: app.ScreenSignIn, Error: &app.ViewError{Code: "network"}}, false, "notifyLost", "diagnostics"},
-		{"sign-out", up, app.View{Screen: app.ScreenSignIn}, false, "", ""},
+		{"first handshake in background", waiting, up, true, false, false, "notifyConnected", ""},
+		{"first handshake in window", waiting, up, false, false, false, "", ""},
+		{"rekey", waiting, up, true, true, false, "", ""},
+		{"blocker", up, blocked, false, true, false, "notifyBlocked", "diagnostics"},
+		{"repeat", blocked, blocked, true, true, true, "", ""},
+		{"background no answer", up, noAnswer, true, true, false, "notifyNoAnswer", "diagnostics"},
+		{"foreground no answer", up, noAnswer, false, true, false, "", ""},
+		{"recovery", blocked, up, true, true, true, "notifyRestored", "diagnostics"},
+		{"unannounced recovery", blocked, up, true, true, false, "", ""},
+		{"expiration", up, signIn("time_limit"), false, true, false, "notifyExpired", ""},
+		{"admin termination", up, signIn("ended_by_admin"), false, true, false, "notifyAdminEnded", ""},
+		{"background error", up, lost, true, true, false, "notifyLost", "diagnostics"},
+		{"foreground error", up, lost, false, true, false, "", ""},
+		{"tray sign-out", up, signIn("signed_out_from_tray"), true, true, false, "notifyDisconnected", ""},
+		{"window sign-out", up, signIn("signed_out"), true, true, false, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if key, page := connectionNotification(tc.before, tc.after, tc.notified); key != tc.key || page != tc.page {
+			if key, page := connectionNotification(tc.before, tc.after, tc.background, tc.wasUp, tc.notified); key != tc.key || page != tc.page {
 				t.Fatalf("got %q, %q; want %q, %q", key, page, tc.key, tc.page)
+			}
+			if tc.key != "" {
+				for _, lang := range []string{"ar", "en"} {
+					if trayText[lang][tc.key] == "" {
+						t.Errorf("missing %s notification text for %q", lang, tc.key)
+					}
+				}
 			}
 		})
 	}

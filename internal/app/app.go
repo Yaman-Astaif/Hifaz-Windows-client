@@ -257,9 +257,16 @@ func (c *Controller) Do(a Action) {
 		case "signin_cancel":
 			c.signin = nil
 			c.setView(View{Screen: ScreenSignIn})
-		case "disconnect":
+		case "disconnect", "disconnect_from_tray":
+			if c.session == nil {
+				return
+			}
 			c.endSession(true, "")
-			c.setView(View{Screen: ScreenSignIn})
+			v := View{Screen: ScreenSignIn, Notice: "signed_out"}
+			if a.Name == "disconnect_from_tray" {
+				v.Notice = "signed_out_from_tray"
+			}
+			c.setView(v)
 		case "remove_account":
 			c.removeAccount()
 		}
