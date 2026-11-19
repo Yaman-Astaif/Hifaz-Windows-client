@@ -48,6 +48,18 @@
     return (secret || "").replace(/(.{4})/g, "$1 ").trim();
   }
 
+  // blockerText says why the server doesn't answer, naming another VPN's
+  // tunnels when known. Each name is isolated so it keeps its own direction;
+  // the texts isolate the whole "WireGuard: names" piece as well, so in
+  // Arabic its colon and commas stay in the left-to-right run.
+  function blockerText(b) {
+    if (b && b.app === "wireguard") {
+      const names = (b.tunnels || []).map((n) => "\u2068" + n + "\u2069").join(", ");
+      return names ? t("blockedWireGuardNamed", { tunnel: names }) : t("blockedWireGuard");
+    }
+    return t("noAnswerGeneral");
+  }
+
   // model flattens the view into the values the page shows.
   function model() {
     const m = {};
@@ -84,6 +96,13 @@
       put("session.expires_at_text", when(s.expires_at));
       put("session.traffic_text", t("trafficValue", { rx: bytes(s.rx_bytes), tx: bytes(s.tx_bytes) }));
       put("session.routes_text", (s.allowed_ips || []).join("\n"));
+      // Whether the server answers through the tunnel; a service that does
+      // not say counts as up.
+      const link = s.link || "up";
+      put("session.up", link === "up");
+      put("session.waiting", link === "waiting");
+      put("session.no_answer", link === "no_answer");
+      if (link === "no_answer") put("session.blocker_text", blockerText(s.blocker));
       if (s.idle_timeout_seconds) {
         put("session.idle_note", t("idleNote", { idle: t("minutes", Math.max(1, Math.round(s.idle_timeout_seconds / 60))) }));
       }

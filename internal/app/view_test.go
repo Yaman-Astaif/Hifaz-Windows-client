@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/ipc"
 	"github.com/Yaman-Astaif/Hifaz-Windows-client/internal/protocol"
@@ -36,5 +37,31 @@ func TestViewErrorServiceCauses(t *testing.T) {
 				t.Fatalf("viewError(%v) = %+v, want %q", tc.err, got, tc.code)
 			}
 		})
+	}
+}
+
+func TestSessionViewLink(t *testing.T) {
+	doc := &protocol.Session{IdleTimeoutSeconds: 600}
+	v := sessionView(doc, &ipc.Status{Link: ipc.LinkNoAnswer,
+		Blocker: &ipc.Blocker{App: ipc.BlockerWireGuard, Tunnels: []string{"wg-client-10"}}})
+	if v.Link != "no_answer" || v.Blocker == nil || v.Blocker.App != "wireguard" || len(v.Blocker.Tunnels) != 1 || v.Blocker.Tunnels[0] != "wg-client-10" {
+		t.Fatalf("%+v %+v", v, v.Blocker)
+	}
+	v = sessionView(doc, &ipc.Status{Link: ipc.LinkUp})
+	if v.Link != "up" || v.Blocker != nil {
+		t.Fatalf("%+v", v)
+	}
+	if v := sessionView(doc, nil); v.Link != "" || v.Blocker != nil {
+		t.Fatalf("no status: %+v", v)
+	}
+}
+
+func TestStatsRefreshInterval(t *testing.T) {
+	for link, want := range map[ipc.Link]time.Duration{
+		ipc.LinkUp: statsRefresh, "": statsRefresh, ipc.LinkWaiting: linkRefresh, ipc.LinkNoAnswer: linkRefresh,
+	} {
+		if got := refreshEvery(link); got != want {
+			t.Errorf("%q: %v, want %v", link, got, want)
+		}
 	}
 }

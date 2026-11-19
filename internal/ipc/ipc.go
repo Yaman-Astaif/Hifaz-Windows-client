@@ -107,6 +107,30 @@ const (
 	StateConnected  State = "connected"
 )
 
+// Link says whether the server answers through the tunnel, while State is
+// connected. The tunnel is up in every case; DNS is applied only while the
+// link is up.
+type Link string
+
+// Links.
+const (
+	LinkWaiting  Link = "waiting"   // no handshake yet since sign-in
+	LinkUp       Link = "up"        // WireGuard has a recent handshake
+	LinkNoAnswer Link = "no_answer" // no handshake when one was due
+)
+
+// Blocker says what keeps the server from answering, when it can be told.
+type Blocker struct {
+	App     string   `json:"app"`               // BlockerWireGuard
+	Tunnels []string `json:"tunnels,omitempty"` // its tunnels' names, if known
+}
+
+// Blocker apps.
+const (
+	// The WireGuard app's "Block untunneled traffic" (kill switch).
+	BlockerWireGuard = "wireguard"
+)
+
 // Owner says whose the tunnel is, from the caller's point of view.
 type Owner string
 
@@ -130,6 +154,10 @@ type Status struct {
 	LastHandshake time.Time `json:"last_handshake,omitzero"`
 	RxBytes       uint64    `json:"rx_bytes,omitempty"`
 	TxBytes       uint64    `json:"tx_bytes,omitempty"`
+	// Link and Blocker: whether the server answers, and if not, why (when
+	// known).
+	Link    Link     `json:"link,omitempty"`
+	Blocker *Blocker `json:"blocker,omitempty"`
 	// LastError is the code of the last failure or end reason seen by the
 	// caller's tunnel, for example "full_tunnel" or "idle".
 	LastError string `json:"last_error,omitempty"`

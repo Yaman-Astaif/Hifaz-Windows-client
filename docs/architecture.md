@@ -41,6 +41,7 @@
 | Endpoint resolving inside the tunnel | When the endpoint name changes while connected, the lookup goes to the server's DNS. If the answer is a private, CGNAT, unique-local or link-local address inside the server's narrower routes, it is assumed to be a private answer from the server's DNS, reachable only through the tunnel. The driver does not send the encrypted packets into its own interface, so the tunnel would stop working. The service keeps the current endpoint and logs a line; the next sign-in resolves again. A public address, a literal IP endpoint, or any address when the routes cover its whole family (a full tunnel, however split, as for the full-tunnel policy) is followed. If only the port changes, the service keeps the address without a lookup. |
 | Planting files where the service writes | Service data is in `Program Files\Hifaz\Data` (users cannot create anything there beforehand), with a protected ACL; links are refused. |
 | Uninstall deleting the wrong folder | Per-user folders that are links are removed as links only. |
+| Another VPN's kill switch | The WireGuard app's "Block untunneled traffic" drops Hifaz's packets before they reach the Hifaz adapter. Hifaz never changes or works around another app's firewall, routes or DNS. It applies its DNS only after the server's first handshake, so the user's DNS keeps working; the app says the server doesn't answer, and, from a read-only WFP check, names the WireGuard tunnel to change. |
 | Script injection in the window | The page sets text only, never HTML; strict CSP; no external content; dev tools, context menu and password autosave off. |
 
 Limits, stated plainly:
@@ -89,6 +90,49 @@ Limits, stated plainly:
    seconds, as seen with clients that keep the tunnel configured). No
    persistent keepalive: the server detects idle sessions by silence.
 
+While the tunnel is up the service checks, every second, whether the
+server answers (`internal/daemon/link.go`), from WireGuard's last handshake
+and the bytes sent:
+
+- **Waiting**: after sign-in, the service sends one probe packet into the
+  tunnel (a DNS query to the server's DNS address inside the routes, or else
+  to the first address of the first route) so WireGuard makes a handshake.
+  The app shows "Waiting for the Hifaz server to answer". DNS is not applied
+  yet: the user's own DNS keeps working.
+- **Up** (shown as Connected): the first handshake came. Hifaz DNS (interface
+  DNS and the NRPT rule) is applied now. Nothing is sent to keep the link
+  up; an idle tunnel with an old handshake stays up.
+- **No answer**: no handshake within 10 seconds of sign-in, or more than 3
+  minutes since the last one while traffic is being sent (plus 15 seconds'
+  grace). Hifaz DNS is removed until the server answers again; the tunnel
+  stays. The app
+  says "Signed in, but the Hifaz server doesn't answer", and why when it can
+  tell: when there is no answer, the service checks once a minute. It reads the
+  Windows Filtering Platform (WFP), read-only, for the WireGuard app's kill
+  switch: a provider named `WireGuard` with a block-all filter in the
+  outbound connection layers; its permit filter for one adapter names the
+  tunnel. When no blocker is known, the app shows the general text.
+
+Probes are bounded: one every 10 seconds, only while waiting or with no
+answer, and only for 90 seconds (`probeWindow`, WireGuard's own limit for
+handshake retries) after sign-in, after a new server key, after the link
+went from up to no answer, or when a blocker found while there was no
+answer is gone (the user turned the other VPN's kill switch off; with DNS
+off nothing else would start a handshake). They are never re-armed by a
+timer, and a blocker going away re-arms them once per change. The server
+counts received handshake initiations as activity, so endless probing could
+keep a session whose handshake never completes from going idle (protocol
+section 8). After the window only the user's own traffic makes WireGuard try
+again, and a handshake then still brings Connected and DNS back; with no
+blocker found, the general text tells the user to sign out and in once the
+cause is fixed.
+
+A new server key in a configuration starts waiting again. Idle, the time
+limit, sign-out and the rest end the tunnel as before. While connected, the
+service checks for the WireGuard kill switch every 30 seconds. If it finds
+one, Hifaz removes its DNS settings and shows the blocker. It checks
+again every minute and resumes probing when the blocker clears.
+
 ## Coexistence
 
 - Own adapter (`Hifaz`, fixed GUID) next to any WireGuard or other VPN
@@ -105,9 +149,15 @@ Limits, stated plainly:
   and the service logs it. The rule and interface DNS go when the tunnel
   goes down, and the DNS cache is flushed, so the user's own DNS works again
   at once. If Group Policy sets NRPT rules, Windows ignores local ones; the
-  service logs it rather than writing into the policy area.
+  service logs it rather than writing into the policy area. All of this
+  waits for the server's first handshake and is removed while the server
+  doesn't answer (see Session lifecycle), so a blocked tunnel never leaves
+  the machine without DNS.
 - No firewall rules, no kill switch, no keepalive (sessions must be able to
-  go idle).
+  go idle); probe packets only while the server doesn't answer, and for at
+  most 90 seconds at a time. Other
+  programs' firewall rules are only read, to say why the server doesn't
+  answer.
 - Uninstall removes the adapter, the rule, the driver if no other program
   uses it (the WireGuard app reinstalls it when it needs it), the service
   data and every user's Hifaz folder.

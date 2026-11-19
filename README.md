@@ -134,6 +134,12 @@ An entry that cannot be read makes the service allow no server.
   relies on its adapter's DNS without its own NRPT rule loses its private
   names while Hifaz is connected (its more specific NRPT rules still win);
   this ends when Hifaz disconnects.
+- "Connected" and Hifaz DNS only once the server answers through the
+  tunnel (WireGuard's first handshake). Until then, or while it stops
+  answering, the user's own DNS keeps working and the app says the server
+  doesn't answer, naming the WireGuard app tunnel whose kill switch
+  ("Block untunneled traffic") blocks Hifaz when that is the cause. Hifaz
+  only reads other programs' firewall rules; it never changes them.
 - Device key and WireGuard key are made on the device and sealed with
   DPAPI for the current user (no admin rights). A TPM-backed key is a later
   step.
@@ -141,7 +147,8 @@ An entry that cannot be read makes the service allow no server.
 - Installer: MSI (WiX 5, the last release under its plain open-source
   licence). Builds are unsigned for now; Windows SmartScreen warns once.
 
-## Copyright
+## License
 
-Copyright (C) 2026 Yaman Astaif. All rights reserved (see `COPYRIGHT`).
-Third-party parts keep their own licences: `THIRD-PARTY-NOTICES.txt`.
+Copyright (c) 2026 Yaman Astaif. The Hifaz Windows client is licensed under
+the [MIT License](LICENSE). Third-party components retain their own
+licenses. See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

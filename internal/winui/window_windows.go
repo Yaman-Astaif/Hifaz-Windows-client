@@ -528,10 +528,10 @@ func (h *windowHost) connected() bool {
 func (h *windowHost) trayData() *notifyIconData {
 	d := &notifyIconData{Size: uint32(unsafe.Sizeof(notifyIconData{})), Wnd: h.hwnd, ID: trayID,
 		Flags: nifMessage | nifIcon | nifTip | nifShowTip, CallbackMessage: wmAppTray}
-	tip := "disconnected"
+	tip, up := trayState(views.get())
 	d.Icon = h.icons[0]
-	if h.connected() {
-		tip, d.Icon = "connected", h.icons[1]
+	if up {
+		d.Icon = h.icons[1]
 	}
 	s, _ := windows.UTF16FromString(text(h.prefs.Lang, tip))
 	copy(d.Tip[:len(d.Tip)-1], s)

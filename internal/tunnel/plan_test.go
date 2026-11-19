@@ -166,3 +166,49 @@ func TestRefuseEndpoint(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		address string
+		allowed []string
+		dns     []string
+		want    string // "" for none
+	}{
+		{"DNS inside the routes", "10.98.10.4/32", []string{"10.98.0.0/16"}, []string{"10.98.0.1"}, "10.98.0.1:53"},
+		{"second DNS inside", "10.98.10.4/32", []string{"10.98.0.0/16"}, []string{"192.0.2.53", "10.98.0.2"}, "10.98.0.2:53"},
+		{"DNS outside: the first route", "10.98.10.4/32", []string{"10.20.0.0/16", "10.98.0.0/16"}, []string{"192.0.2.53"}, "10.20.0.1:53"},
+		{"no DNS", "10.98.10.4/32", []string{"10.98.0.0/16"}, nil, "10.98.0.1:53"},
+		{"a /32 route", "10.98.10.4/32", []string{"10.98.0.7/32"}, nil, "10.98.0.7:53"},
+		{"IPv6 /128 route", "fd00::4/128", []string{"fd00::53/128"}, nil, "[fd00::53]:53"},
+		{"/0 only", "10.98.10.4/32", []string{"0.0.0.0/0"}, nil, ""},
+		{"/0 then a narrower route", "10.98.10.4/32", []string{"0.0.0.0/0", "10.98.0.0/16"}, nil, "10.98.0.1:53"},
+		{"no address for the family", "10.98.10.4/32", []string{"fd00::/64"}, []string{"fd00::53"}, ""},
+		{"IPv6 DNS with an IPv4 address", "10.98.10.4/32", []string{"10.98.0.0/16", "fd00::/64"}, []string{"fd00::53", "10.98.0.1"}, "10.98.0.1:53"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &protocol.Config{Version: 1, Address: tc.address,
+				ServerPublicKey: "mkk2/n0976hg+yS1HkmS3Jr4EphDhzmX+vOZ02alXlY=", Endpoint: "vpn.example.com:51820",
+				AllowedIPs: tc.allowed, DNS: protocol.DNS{Servers: tc.dns}}
+			tcfg, err := c.Parse()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if p := NewPlan(tcfg).Probe; p.IsValid() {
+				got = p.String()
+			}
+			if got != tc.want {
+				t.Fatalf("probe %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProbeQuery(t *testing.T) {
+	// A DNS query for the root's name servers: header, root name, NS, IN.
+	want := []byte{0x48, 0x66, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1}
+	if !reflect.DeepEqual(probeQuery[:], want) {
+		t.Fatalf("%x", probeQuery)
+	}
+}
