@@ -526,14 +526,7 @@ func (e *Engine) checkLink() {
 	before := o.link.state
 	a := o.link.step(st, e.now())
 	if a.dnsOff {
-		if err := e.tunnel.SetDNS(false); err != nil {
-			if err.Error() != o.link.dnsErr { // once per error, not every second
-				o.link.dnsErr = err.Error()
-				e.log("removing DNS failed; trying again", "err", err)
-			}
-		} else {
-			o.link.dnsOn, o.link.dnsErr = false, ""
-		}
+		e.removeLinkDNSLocked(o.link)
 	}
 	if a.dnsOn {
 		if err := e.tunnel.SetDNS(true); err != nil {
@@ -551,6 +544,7 @@ func (e *Engine) checkLink() {
 		e.bumpLocked()
 		e.log("server link", "state", o.link.state, "was", before, "last_handshake", st.LastHandshake)
 	}
+	lookupState := o.link.state
 	check := a.checkBlocker && e.findBlocker != nil
 	e.mu.Unlock()
 	if !check {
@@ -571,11 +565,25 @@ func (e *Engine) checkLink() {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.owner != o || o.link.state != ipc.LinkNoAnswer {
+	if e.owner != o || o.link.state != lookupState {
 		return
 	}
+	if lookupState == ipc.LinkUp {
+		if b == nil {
+			return
+		}
+		o.link.blocked(e.now())
+		e.removeLinkDNSLocked(o.link)
+	} else if !found && o.link.blockedWhileUp {
+		return // keep the last confirmed blocker until a successful lookup
+	}
+	blockedWhileUp := o.link.blockedWhileUp
 	if found && o.link.blockerFound(b, e.now()) {
 		e.log("the block is gone; probing the server again")
+		if blockedWhileUp {
+			e.probeLocked(o.link)
+			o.link.lastProbe = e.now()
+		}
 	}
 	if sameBlocker(o.link.blocker, b) {
 		return
@@ -584,6 +592,17 @@ func (e *Engine) checkLink() {
 	e.bumpLocked()
 	if b != nil {
 		e.log("the server is blocked", "app", b.App, "tunnels", b.Tunnels)
+	}
+}
+
+func (e *Engine) removeLinkDNSLocked(l *link) {
+	if err := e.tunnel.SetDNS(false); err != nil {
+		if err.Error() != l.dnsErr { // once per error, not every second
+			l.dnsErr = err.Error()
+			e.log("removing DNS failed; trying again", "err", err)
+		}
+	} else {
+		l.dnsOn, l.dnsErr = false, ""
 	}
 }
 

@@ -809,3 +809,37 @@ func TestLinkNoBlockerNoRearm(t *testing.T) {
 		t.Fatalf("%d probes after the window with no blocker ever found", h.tun.probes-probes)
 	}
 }
+
+func TestKillSwitchEnabledWhileConnected(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	if r := h.connect(7, alice, config(1)); r.Error != nil {
+		t.Fatal(r.Error)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(linkPoll)
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard, Tunnels: []string{"wg-client-10"}}
+	h.tick(blockerWatch - linkPoll)
+	if st := h.status(alice); st.Link != ipc.LinkUp || !h.tun.dns || h.finds != 0 {
+		t.Fatalf("before the poll: %+v, DNS %v, checks %d", st, h.tun.dns, h.finds)
+	}
+	h.tick(linkPoll)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || !sameBlocker(st.Blocker, h.blocker) || h.tun.dns {
+		t.Fatalf("after detection: %+v, DNS %v", st, h.tun.dns)
+	}
+	probes := h.tun.probes
+	h.findErr = errors.New("access denied")
+	h.tick(blockerRecheck)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || !sameBlocker(st.Blocker, h.blocker) || h.tun.dns || h.tun.probes != probes {
+		t.Fatalf("after failed recheck with a recent handshake: %+v, DNS %v, probes %d", st, h.tun.dns, h.tun.probes)
+	}
+	h.findErr, h.blocker = nil, nil
+	h.tick(blockerRecheck)
+	if h.tun.probes != probes+1 {
+		t.Fatalf("after blocker clears: got %d new probes, want one", h.tun.probes-probes)
+	}
+	h.tick(linkPoll)
+	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
+		t.Fatalf("after recovery: %+v, DNS %v", st, h.tun.dns)
+	}
+}

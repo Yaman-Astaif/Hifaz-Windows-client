@@ -33,6 +33,7 @@ const (
 	// WireGuard itself gives up retrying a handshake after 90 seconds
 	// (Rekey-Attempt-Time); probing stops then too.
 	probeWindow    = 90 * time.Second
+	blockerWatch   = 30 * time.Second
 	blockerRecheck = time.Minute
 )
 
@@ -56,6 +57,8 @@ type link struct {
 	probeErr, dnsErr string
 	// blockerSeen: a lookup in this no-answer episode found a blocker.
 	blockerSeen bool
+	// A blocker found while up can leave a recent handshake in the driver.
+	blockedWhileUp bool
 }
 
 // actions are what the engine does after a step.
@@ -76,7 +79,7 @@ func newLink(now time.Time) *link {
 // wait starts waiting again (a new server key resets the handshake).
 func (l *link) wait(now time.Time) {
 	l.state, l.since, l.lastProbe, l.probeArmed, l.probeErr = ipc.LinkWaiting, now, now, now, ""
-	l.sendingSince, l.blocker, l.blockerSeen = time.Time{}, nil, false
+	l.sendingSince, l.blocker, l.blockerSeen, l.blockedWhileUp = time.Time{}, nil, false, false
 }
 
 // blockerFound records a successful lookup's result. When a blocker found
@@ -91,7 +94,7 @@ func (l *link) blockerFound(b *ipc.Blocker, now time.Time) bool {
 	if !l.blockerSeen {
 		return false
 	}
-	l.blockerSeen = false
+	l.blockerSeen, l.blockedWhileUp = false, false
 	l.probeArmed, l.probeErr = now, ""
 	return true
 }
@@ -115,16 +118,19 @@ func (l *link) step(st Stats, now time.Time) actions {
 		if !l.sendingSince.IsZero() && now.Sub(l.sendingSince) >= lostGrace {
 			l.noAnswer(now, &a)
 			l.probeArmed, l.probeErr, l.dnsErr = now, "", "" // a new episode
+		} else if now.Sub(l.lastBlockerCheck) >= blockerWatch {
+			l.lastBlockerCheck = now
+			a.checkBlocker = true
 		}
 	case ipc.LinkWaiting:
 		if fresh {
-			l.up()
+			l.up(now)
 		} else if now.Sub(l.since) >= firstAnswerTimeout {
 			l.noAnswer(now, &a)
 		}
 	case ipc.LinkNoAnswer:
-		if fresh {
-			l.up()
+		if fresh && !l.blockedWhileUp {
+			l.up(now)
 		} else if now.Sub(l.lastBlockerCheck) >= blockerRecheck {
 			l.lastBlockerCheck = now
 			a.checkBlocker = true
@@ -141,7 +147,14 @@ func (l *link) step(st Stats, now time.Time) actions {
 	return a
 }
 
-func (l *link) up() {
+func (l *link) blocked(now time.Time) {
+	l.state, l.sendingSince, l.lastBlockerCheck = ipc.LinkNoAnswer, time.Time{}, now
+	l.probeArmed, l.dnsErr = time.Time{}, ""
+	l.blockedWhileUp = true
+}
+
+func (l *link) up(now time.Time) {
+	l.lastBlockerCheck = now
 	l.state, l.sendingSince, l.blocker, l.blockerSeen = ipc.LinkUp, time.Time{}, nil, false
 }
 
