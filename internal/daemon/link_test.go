@@ -76,10 +76,11 @@ func TestLinkHandshakeBringsDNS(t *testing.T) {
 	if !a.changed || !a.dnsOn || a.probe || a.checkBlocker {
 		t.Fatalf("%+v", a)
 	}
-	// Up while the handshake is fresh: no more actions.
+	// While up, the only action is the scheduled firewall check.
 	r.st.TxBytes = 1000
-	for range 30 {
-		if a := r.tick(); a != (actions{}) {
+	for elapsed := linkPoll; elapsed <= 2*blockerWatch; elapsed += linkPoll {
+		want := actions{checkBlocker: elapsed%blockerWatch == 0}
+		if a := r.tick(); a != want {
 			t.Fatalf("at %v: %+v", r.now.Sub(t0), a)
 		}
 	}
@@ -92,7 +93,7 @@ func TestLinkIdleStaysUpWithoutProbes(t *testing.T) {
 	r.want(ipc.LinkUp, true)
 	// An hour with nothing sent: the handshake grows old, nothing changes,
 	// nothing is sent.
-	if probes, checks := r.until(time.Hour); probes != 0 || checks != 0 {
+	if probes, checks := r.until(time.Hour); probes != 0 || checks != int((time.Hour-linkPoll)/blockerWatch) {
 		t.Fatalf("%d probes, %d checks while idle", probes, checks)
 	}
 	r.want(ipc.LinkUp, true)

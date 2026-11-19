@@ -107,11 +107,11 @@ and the bytes sent:
   grace). Hifaz DNS is removed until the server answers again; the tunnel
   stays. The app
   says "Signed in, but the Hifaz server doesn't answer", and why when it can
-  tell: in this state only, at most once a minute, the service reads the
+  tell: when there is no answer, the service checks once a minute. It reads the
   Windows Filtering Platform (WFP), read-only, for the WireGuard app's kill
   switch: a provider named `WireGuard` with a block-all filter in the
   outbound connection layers; its permit filter for one adapter names the
-  tunnel. Anything else, or a failed check, gives the general text.
+  tunnel. When no blocker is known, the app shows the general text.
 
 Probes are bounded: one every 10 seconds, only while waiting or with no
 answer, and only for 90 seconds (`probeWindow`, WireGuard's own limit for
@@ -128,9 +128,10 @@ blocker found, the general text tells the user to sign out and in once the
 cause is fixed.
 
 A new server key in a configuration starts waiting again. Idle, the time
-limit, sign-out and the rest end the tunnel as before. A kill switch turned
-on while already connected is not looked for: WFP drops the packets before
-the adapter, so the counters cannot show it.
+limit, sign-out and the rest end the tunnel as before. While connected, the
+service checks for the WireGuard kill switch every 30 seconds. If it finds
+one, Hifaz removes its DNS settings and shows the blocker. It checks
+again every minute and resumes probing when the blocker clears.
 
 ## Coexistence
 
