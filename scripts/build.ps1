@@ -58,7 +58,7 @@ foreach ($a in $Arch) {
   Copy-Item "$sdk\bin\$goarch\wireguard.dll" "$bin\wireguard.dll"
   Copy-Item "$sdk\LICENSE.txt" "$bin\licenses\wireguard-nt-LICENSE.txt"
   Copy-Item "THIRD-PARTY-NOTICES.txt" "$bin\licenses\THIRD-PARTY-NOTICES.txt"
-  Copy-Item "COPYRIGHT" "$bin\licenses\COPYRIGHT.txt"
+  Copy-Item "LICENSE" "$bin\licenses\COPYRIGHT.txt"
 
   if (-not $NoMsi) {
     $msi = "dist\Hifaz-$Version-$a.msi"
