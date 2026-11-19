@@ -3,6 +3,7 @@ package ipc
 import (
 	"bytes"
 	"encoding/binary"
+	"reflect"
 	"testing"
 )
 
@@ -42,5 +43,28 @@ func TestLimits(t *testing.T) {
 	var r Request
 	if err := Read(bytes.NewReader(append(hdr[:], "{}"...)), &r); err == nil {
 		t.Fatal("short body accepted")
+	}
+}
+
+func TestStatusLinkRoundTrip(t *testing.T) {
+	for _, in := range []Status{
+		{Generation: 1, State: StateConnected, Owner: OwnerYou},
+		{Generation: 2, State: StateConnected, Owner: OwnerYou, Link: LinkNoAnswer,
+			Blocker: &Blocker{App: BlockerWireGuard, Tunnels: []string{"wg-client-10"}}},
+	} {
+		var buf bytes.Buffer
+		if err := Write(&buf, in); err != nil {
+			t.Fatal(err)
+		}
+		if in.Link == "" && bytes.Contains(buf.Bytes(), []byte(`"link"`)) {
+			t.Fatalf("empty link written: %s", buf.Bytes()[4:])
+		}
+		var out Status
+		if err := Read(&buf, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(in, out) {
+			t.Fatalf("%+v != %+v", out, in)
+		}
 	}
 }

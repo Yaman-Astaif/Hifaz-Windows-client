@@ -35,6 +35,8 @@ func (t *nopTunnel) Down() error {
 	return nil
 }
 func (t *nopTunnel) Stats() (daemon.Stats, error) { return daemon.Stats{}, nil }
+func (t *nopTunnel) SetDNS(bool) error            { return nil }
+func (t *nopTunnel) Probe() error                 { return nil }
 func (t *nopTunnel) isUp() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()

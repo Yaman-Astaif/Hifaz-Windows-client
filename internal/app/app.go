@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -57,6 +58,7 @@ const (
 	retryMin     = 2 * time.Second
 	retryMax     = 30 * time.Second
 	statsRefresh = 5 * time.Second
+	linkRefresh  = time.Second // while waiting for the server's answer
 	renewTimeout = 10 * time.Second
 )
 
@@ -776,8 +778,21 @@ func sessionView(s *protocol.Session, st *ipc.Status) *SessionView {
 	if st != nil {
 		v.ConnectedAt, v.Address, v.AllowedIPs = st.ConnectedAt, st.Address, st.AllowedIPs
 		v.LastHandshake, v.RxBytes, v.TxBytes = st.LastHandshake, st.RxBytes, st.TxBytes
+		v.Link = string(st.Link)
+		if b := st.Blocker; b != nil {
+			v.Blocker = &BlockerView{App: b.App, Tunnels: slices.Clone(b.Tunnels)}
+		}
 	}
 	return v
+}
+
+// refreshEvery is how soon the window's session details are read again:
+// often while waiting for the server's answer, so "Connected" shows at once.
+func refreshEvery(l ipc.Link) time.Duration {
+	if l != "" && l != ipc.LinkUp {
+		return linkRefresh
+	}
+	return statsRefresh
 }
 
 // follow long-polls the session and hands every answer to the service.
@@ -865,9 +880,11 @@ func (c *Controller) sessionLost(s *session, err error) {
 	c.setView(View{Screen: ScreenSignIn, Error: viewError(err)})
 }
 
-// refreshStats updates the traffic counters while the window shows them.
+// refreshStats updates the traffic counters and the link state while the
+// window shows them.
 func (c *Controller) refreshStats(ctx context.Context, s *session) {
-	t := time.NewTicker(statsRefresh)
+	every := linkRefresh // the tunnel has just come up: waiting for the server
+	t := time.NewTimer(every)
 	defer t.Stop()
 	for {
 		select {
@@ -877,8 +894,11 @@ func (c *Controller) refreshStats(ctx context.Context, s *session) {
 		}
 		st, err := c.o.Service.Status()
 		if err != nil {
+			t.Reset(every)
 			continue
 		}
+		every = refreshEvery(st.Link)
+		t.Reset(every)
 		c.post(func() {
 			if c.session != s || c.view.Screen != ScreenConnected {
 				return

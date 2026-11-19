@@ -39,6 +39,45 @@ type Plan struct {
 	// leave by the normal network. Applied anyway (as WireGuard does), but
 	// worth a line in the log.
 	DNSOutsideTunnel []netip.Addr
+	// Probe is where the one packet that starts a handshake goes (see
+	// probeTarget); not valid when no address fits.
+	Probe netip.AddrPort
+}
+
+// probeQuery is the probe packet: a DNS query for the root's name servers
+// (ID "Hf", recursion desired). Any answer is ignored; what matters is that
+// WireGuard has a packet to send, so it makes a handshake.
+var probeQuery = [17]byte{
+	0x48, 0x66, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0, // header: one question
+	0,          // the root name
+	0, 2, 0, 1, // NS, IN
+}
+
+// probeTarget picks where the probe goes, inside the tunnel and of the
+// tunnel address's family (only that family has a source address): the
+// first DNS server inside the routes, else the first route narrower than
+// /0 (its first address after the network's own, or the address of a
+// single-address route). Port 53 in both cases. With neither, there is no
+// probe and the user's own traffic starts the handshake.
+func probeTarget(cfg *protocol.TunnelConfig) netip.AddrPort {
+	is4 := cfg.Address.Addr().Is4()
+	for _, a := range cfg.DNSServers {
+		if a.Is4() == is4 && slices.ContainsFunc(cfg.AllowedIPs, func(r netip.Prefix) bool { return r.Contains(a) }) {
+			return netip.AddrPortFrom(a, 53)
+		}
+	}
+	for _, r := range cfg.AllowedIPs {
+		r = r.Masked()
+		if r.Addr().Is4() != is4 || r.Bits() == 0 {
+			continue
+		}
+		a := r.Addr()
+		if !r.IsSingleIP() {
+			a = a.Next()
+		}
+		return netip.AddrPortFrom(a, 53)
+	}
+	return netip.AddrPort{}
 }
 
 // Rule is one NRPT rule.
@@ -64,6 +103,7 @@ func NewPlan(cfg *protocol.TunnelConfig) *Plan {
 		}
 	}
 	p.Full4, p.Full6 = policy.FullTunnel(cfg.AllowedIPs)
+	p.Probe = probeTarget(cfg)
 	if len(cfg.DNSServers) == 0 {
 		return p
 	}

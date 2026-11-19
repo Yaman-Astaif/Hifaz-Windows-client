@@ -48,6 +48,7 @@ type Tunnel struct {
 	endpoint  netip.AddrPort
 	host      string // endpoint host as configured
 	priv, psk protocol.Key
+	dnsOn     bool // Hifaz DNS applied: SetDNS(true) and not since removed
 }
 
 var _ daemon.Tunnel = (*Tunnel)(nil)
@@ -110,10 +111,9 @@ func (t *Tunnel) bringUp(cfg *protocol.TunnelConfig, plan *Plan) error {
 	if err := t.adapter.SetAdapterState(driver.AdapterStateUp); err != nil {
 		return fmt.Errorf("bringing the adapter up: %w", err)
 	}
-	if err := t.configureInterface(plan); err != nil {
-		return err
-	}
-	return t.configureDNS(plan)
+	// DNS comes later, once the server answers (SetDNS): until then the
+	// user's own DNS keeps working.
+	return t.configureInterface(plan)
 }
 
 // setPeer writes the WireGuard configuration. With replace, the interface
@@ -233,6 +233,59 @@ func (t *Tunnel) configureFamilies(plan *Plan) error {
 	return nil
 }
 
+// SetDNS implements daemon.Tunnel.
+func (t *Tunnel) SetDNS(on bool) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.adapter == nil {
+		return errors.New("tunnel not up")
+	}
+	if on {
+		if err := t.configureDNS(t.plan); err != nil {
+			return err
+		}
+		t.dnsOn = true
+		return nil
+	}
+	t.dnsOn = false
+	defer notifyDNS()
+	return t.clearDNS()
+}
+
+// clearDNS removes Hifaz's NRPT rule and the interface DNS. IPv6 may be off
+// on the machine: its error is ignored. The caller notifies the DNS client.
+func (t *Tunnel) clearDNS() error {
+	err := removeRule()
+	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+		if derr := t.luid.SetDNS(family, nil, nil); derr != nil && family == windows.AF_INET && err == nil {
+			err = fmt.Errorf("clearing DNS: %w", derr)
+		}
+	}
+	return err
+}
+
+// Probe implements daemon.Tunnel: one DNS query to the plan's probe
+// address, through the tunnel. The answer, if any, is not read. Another
+// program's firewall refusing it shows as an error.
+func (t *Tunnel) Probe() error {
+	t.mu.Lock()
+	target := netip.AddrPort{}
+	if t.plan != nil {
+		target = t.plan.Probe
+	}
+	t.mu.Unlock()
+	if !target.IsValid() {
+		return errors.New("no address inside the tunnel to send it to; waiting for the user's own traffic")
+	}
+	c, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(target))
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	_, err = c.Write(probeQuery[:])
+	return err
+}
+
 // configureDNS sets the interface DNS and Hifaz's NRPT rule.
 func (t *Tunnel) configureDNS(plan *Plan) error {
 	defer notifyDNS()
@@ -304,8 +357,10 @@ func (t *Tunnel) Reconfigure(cfg *protocol.TunnelConfig) error {
 	if err := t.configureInterface(plan); err != nil {
 		return err
 	}
-	if err := t.configureDNS(plan); err != nil {
-		return err
+	if t.dnsOn {
+		if err := t.configureDNS(plan); err != nil {
+			return err
+		}
 	}
 	t.plan = plan
 	return nil
@@ -319,15 +374,13 @@ func (t *Tunnel) Down() error {
 }
 
 func (t *Tunnel) downLocked() error {
-	err := removeRule()
-	if t.adapter != nil {
+	var err error
+	if t.adapter == nil {
+		err = removeRule()
+	} else {
 		// Clear the interface DNS first, so nothing of it stays in the
-		// registry. IPv6 may be off on the machine: its error is ignored.
-		for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
-			if derr := t.luid.SetDNS(family, nil, nil); derr != nil && family == windows.AF_INET && err == nil {
-				err = fmt.Errorf("clearing DNS: %w", derr)
-			}
-		}
+		// registry.
+		err = t.clearDNS()
 		// Closing the adapter removes it, with its address and routes.
 		if cerr := t.adapter.Close(); err == nil {
 			err = cerr
@@ -338,6 +391,7 @@ func (t *Tunnel) downLocked() error {
 	t.priv.Wipe()
 	t.psk.Wipe()
 	t.plan = nil
+	t.dnsOn = false
 	return err
 }
 

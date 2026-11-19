@@ -235,6 +235,11 @@ input.code { direction: ltr; text-align: center; letter-spacing: .35em; font-var
 /* ---- connected ---- */
 .ok { display: flex; align-items: center; gap: 8px; color: var(--heading); font-weight: 700; margin: 0 0 14px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--forest-300); box-shadow: 0 0 0 4px rgba(66, 129, 119, .18); flex: none; }
+/* Waiting for the server's answer, and no answer: the theme's colours, so
+   light and dark both follow. */
+.ok.waiting .dot { background: var(--opt); box-shadow: 0 0 0 4px var(--note-bg); }
+.ok.no-answer { color: var(--err); }
+.ok.no-answer .dot { background: var(--err); box-shadow: 0 0 0 4px var(--err-bg); }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0 0 16px; font-size: 14.5px; }
 dt { color: var(--muted); }
 dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; text-align: end; }

@@ -32,6 +32,12 @@ type fakeTunnel struct {
 	downs, ups  int
 	reconfigure int
 	events      []string // "up" and "down", in order
+	stats       Stats
+	dns         bool
+	dnsCalls    []bool
+	failDNS     error
+	failProbe   error
+	probes      int
 }
 
 func (f *fakeTunnel) Up(cfg *protocol.TunnelConfig, priv, psk protocol.Key) error {
@@ -41,6 +47,7 @@ func (f *fakeTunnel) Up(cfg *protocol.TunnelConfig, priv, psk protocol.Key) erro
 		return f.failUp
 	}
 	f.up, f.cfg, f.priv, f.psk = true, cfg, priv, psk
+	f.stats, f.dns = Stats{}, false
 	f.ups++
 	f.events = append(f.events, "up")
 	return nil
@@ -57,22 +64,52 @@ func (f *fakeTunnel) Reconfigure(cfg *protocol.TunnelConfig) error {
 func (f *fakeTunnel) Down() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.up = false
+	f.up, f.dns = false, false
 	f.downs++
 	f.events = append(f.events, "down")
 	return nil
 }
 
-func (f *fakeTunnel) Stats() (Stats, error) { return Stats{RxBytes: 10, TxBytes: 20}, nil }
+func (f *fakeTunnel) Stats() (Stats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.stats
+	st.RxBytes += 10
+	st.TxBytes += 20
+	return st, nil
+}
+
+func (f *fakeTunnel) SetDNS(on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dnsCalls = append(f.dnsCalls, on)
+	if f.failDNS != nil {
+		return f.failDNS
+	}
+	f.dns = on
+	return nil
+}
+
+func (f *fakeTunnel) Probe() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probes++
+	return f.failProbe
+}
 
 type harness struct {
-	t      *testing.T
-	e      *Engine
-	tun    *fakeTunnel
-	id     ed25519.PrivateKey
-	pol    policy.Policy
-	now    time.Time
-	keyB64 string
+	t       *testing.T
+	blocker *ipc.Blocker
+	findErr error
+	finds   int
+	onFind  func() // runs inside FindBlocker, outside the engine's lock
+	logs    []string
+	e       *Engine
+	tun     *fakeTunnel
+	id      ed25519.PrivateKey
+	pol     policy.Policy
+	now     time.Time
+	keyB64  string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -80,7 +117,15 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, tun: &fakeTunnel{}, id: id, now: time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)}
 	h.keyB64 = protocol.EncodeEd25519PublicKey(id.Public().(ed25519.PublicKey))
 	h.e = New(Options{Tunnel: h.tun, Pins: NewFileStore(filepath.Join(t.TempDir(), "pins.json")),
-		Policy: func() policy.Policy { return h.pol }, Now: func() time.Time { return h.now }})
+		Policy: func() policy.Policy { return h.pol }, Now: func() time.Time { return h.now },
+		Log: func(msg string, _ ...any) { h.logs = append(h.logs, msg) },
+		FindBlocker: func() (*ipc.Blocker, error) {
+			h.finds++
+			if h.onFind != nil {
+				h.onFind()
+			}
+			return h.blocker, h.findErr
+		}})
 	return h
 }
 
@@ -437,5 +482,330 @@ func TestEverySignInStartsAFreshTunnel(t *testing.T) {
 		if ev[i] != "down" || ev[i+1] != "up" {
 			t.Fatalf("a tunnel came up without the previous one going down first: %v", ev)
 		}
+	}
+}
+
+// tick advances the clock by d, checking the link every second as Run does.
+func (h *harness) tick(d time.Duration) {
+	for end := h.now.Add(d); h.now.Before(end); {
+		h.now = h.now.Add(linkPoll)
+		h.e.checkLink()
+	}
+}
+
+func (h *harness) status(c Caller) *ipc.Status {
+	return h.do(1, c, ipc.Request{Op: ipc.OpStatus}).Status
+}
+
+func TestLinkDNSAfterFirstAnswer(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	r := h.connect(7, alice, config(1))
+	if r.Error != nil || r.Status.State != ipc.StateConnected || r.Status.Link != ipc.LinkWaiting {
+		t.Fatalf("connect: %+v %v", r.Status, r.Error)
+	}
+	if h.tun.dns || len(h.tun.dnsCalls) != 0 || h.tun.probes != 1 {
+		t.Fatalf("at sign-in: dns=%v calls=%v probes=%d", h.tun.dns, h.tun.dnsCalls, h.tun.probes)
+	}
+	gen := r.Status.Generation
+	h.tick(3 * time.Second)
+	if st := h.status(alice); st.Generation != gen || st.Link != ipc.LinkWaiting {
+		t.Fatalf("still waiting: %+v", st)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	st := h.status(alice)
+	if st.Link != ipc.LinkUp || st.Generation == gen || !h.tun.dns || st.State != ipc.StateConnected {
+		t.Fatalf("after the handshake: %+v dns=%v", st, h.tun.dns)
+	}
+	if h.tun.probes != 1 || h.finds != 0 {
+		t.Fatalf("%d probes, %d blocker checks", h.tun.probes, h.finds)
+	}
+	// Another Windows user sees nothing of it.
+	if st := h.status(bob); st.Link != "" || st.Blocker != nil {
+		t.Fatalf("bob sees %+v", st)
+	}
+}
+
+func TestLinkNoAnswerFindsBlocker(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard, Tunnels: []string{"wg-client-10"}}
+	gen := h.connect(7, alice, config(1)).Status.Generation
+	h.tick(firstAnswerTimeout)
+	st := h.status(alice)
+	if st.Link != ipc.LinkNoAnswer || st.Generation == gen || h.tun.dns || h.finds != 1 {
+		t.Fatalf("no answer: %+v dns=%v finds=%d", st, h.tun.dns, h.finds)
+	}
+	if st.Blocker == nil || st.Blocker.App != ipc.BlockerWireGuard || len(st.Blocker.Tunnels) != 1 || st.Blocker.Tunnels[0] != "wg-client-10" {
+		t.Fatalf("blocker %+v", st.Blocker)
+	}
+	if h.tun.probes != 2 {
+		t.Fatalf("%d probes", h.tun.probes)
+	}
+	if st := h.status(bob); st.Link != "" || st.Blocker != nil {
+		t.Fatalf("bob sees %+v", st)
+	}
+	// The kill switch goes; the next check finds nothing.
+	h.blocker = nil
+	h.tick(blockerRecheck)
+	if st := h.status(alice); st.Blocker != nil || h.finds != 2 {
+		t.Fatalf("after recheck: %+v finds=%d", st.Blocker, h.finds)
+	}
+	// The server answers: DNS on, Connected.
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard}
+	h.tick(blockerRecheck)
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
+		t.Fatalf("answered: %+v dns=%v", st, h.tun.dns)
+	}
+}
+
+func TestLinkBlockerCheckFails(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.blocker, h.findErr = &ipc.Blocker{App: ipc.BlockerWireGuard}, errors.New("access denied")
+	h.connect(7, alice, config(1))
+	h.tick(firstAnswerTimeout)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || st.Blocker != nil {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestLinkLostRemovesDNS(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	h.tick(handshakeLost + time.Minute) // idle
+	if !h.tun.dns || h.status(alice).Link != ipc.LinkUp {
+		t.Fatal("idle tunnel lost its DNS")
+	}
+	h.tun.stats.TxBytes = 1000   // sending, no handshake
+	h.tick(lostGrace + linkPoll) // the first second sees the bytes grow
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || h.tun.dns {
+		t.Fatalf("lost: %+v dns=%v", st, h.tun.dns)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	if st := h.status(alice); st.Link != ipc.LinkUp || !h.tun.dns {
+		t.Fatalf("back: %+v dns=%v", st, h.tun.dns)
+	}
+}
+
+func TestLinkNewServerKeyWaitsAgain(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	// A newer configuration with the same key: the link stays up.
+	h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: h.sessionDoc(h.nonce(alice), config(2))})
+	if st := h.status(alice); st.Link != ipc.LinkUp || h.tun.probes != 1 {
+		t.Fatalf("same key: %+v probes=%d", st, h.tun.probes)
+	}
+	newKey := config(3)
+	newKey["server_public_key"] = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+	h.tun.stats.LastHandshake = time.Time{} // the driver's new peer has none
+	r := h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: h.sessionDoc(h.nonce(alice), newKey)})
+	if r.Error != nil || r.Status.Link != ipc.LinkWaiting || h.tun.probes != 2 || !h.tun.dns {
+		t.Fatalf("new key: %+v %v probes=%d dns=%v", r.Status, r.Error, h.tun.probes, h.tun.dns)
+	}
+	h.tick(firstAnswerTimeout)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || h.tun.dns {
+		t.Fatalf("no answer with the new key: %+v dns=%v", st, h.tun.dns)
+	}
+}
+
+func TestLinkDNSFailureTakesTunnelDown(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tun.failDNS = errors.New("registry")
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	if st := h.status(alice); h.tun.up || st.State != ipc.StateIdle || st.LastError != ipc.ErrTunnel {
+		t.Fatalf("%+v up=%v", st, h.tun.up)
+	}
+}
+
+func TestLinkWithoutOwner(t *testing.T) {
+	h := newHarness(t)
+	h.tick(time.Minute)
+	if h.tun.probes != 0 || len(h.tun.dnsCalls) != 0 || h.finds != 0 {
+		t.Fatal("tunnel touched without an owner")
+	}
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.do(7, alice, ipc.Request{Op: ipc.OpDisconnect})
+	h.tick(time.Minute)
+	if h.tun.probes != 1 || len(h.tun.dnsCalls) != 0 || h.finds != 0 {
+		t.Fatalf("after sign-out: probes=%d dns=%v finds=%d", h.tun.probes, h.tun.dnsCalls, h.finds)
+	}
+}
+
+func TestRunChecksLink(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tun.mu.Lock()
+	h.tun.stats.LastHandshake = h.now
+	h.tun.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.e.Run(ctx); close(done) }()
+	for deadline := time.Now().Add(5 * time.Second); h.status(alice).Link != ipc.LinkUp; {
+		if time.Now().After(deadline) {
+			t.Fatal("Run did not check the link")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func count(list []string, s string) int {
+	n := 0
+	for _, x := range list {
+		if x == s {
+			n++
+		}
+	}
+	return n
+}
+
+func TestLinkBlockerCheckPanics(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard}
+	h.onFind = func() { panic("bad layout") }
+	h.connect(7, alice, config(1))
+	h.tick(firstAnswerTimeout + 3*blockerRecheck)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || st.Blocker != nil || h.finds != 4 {
+		t.Fatalf("%+v finds=%d", st, h.finds)
+	}
+	if n := count(h.logs, "looking for what blocks the server failed"); n != 1 {
+		t.Fatalf("logged %d times", n)
+	}
+}
+
+func TestLinkBlockerResultDropped(t *testing.T) {
+	newKey := config(2)
+	newKey["server_public_key"] = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+	for name, during := range map[string]func(h *harness){
+		"owner signed out": func(h *harness) { h.do(7, alice, ipc.Request{Op: ipc.OpDisconnect}) },
+		"signed in again":  func(h *harness) { h.connect(8, alice, config(1)) },
+		"new server key": func(h *harness) {
+			h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: h.sessionDoc(h.nonce(alice), newKey)})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.register(alice)
+			h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard}
+			h.connect(7, alice, config(1))
+			h.onFind = func() { h.onFind = nil; during(h) }
+			gen := h.status(alice).Generation
+			h.now = h.now.Add(firstAnswerTimeout)
+			h.e.checkLink()
+			st := h.status(alice)
+			if st.Blocker != nil || h.finds != 1 {
+				t.Fatalf("%+v finds=%d", st, h.finds)
+			}
+			if st.Generation == gen {
+				t.Fatal("the change during the lookup was not seen")
+			}
+		})
+	}
+}
+
+func TestProbeFailureLoggedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.tun.failProbe = errors.New("no address inside the tunnel")
+	h.connect(7, alice, config(1))
+	h.tick(10 * time.Minute)
+	if n := count(h.logs, "probe packet not sent"); n != 1 {
+		t.Fatalf("logged %d times", n)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second) // up, DNS on
+	h.tun.failDNS = errors.New("registry")
+	h.tun.stats.TxBytes = 5000
+	h.tun.stats.LastHandshake = h.now.Add(-handshakeLost - time.Minute)
+	h.tick(lostGrace + time.Minute) // no answer; DNS can't be removed
+	if n := count(h.logs, "removing DNS failed; trying again"); n != 1 {
+		t.Fatalf("DNS failure logged %d times", n)
+	}
+	// A new episode logs the probe failure again.
+	if n := count(h.logs, "probe packet not sent"); n != 2 {
+		t.Fatalf("probe failure logged %d times in two episodes", n)
+	}
+}
+
+// The user follows the warning after the probe window is over: the next
+// lookup finds the kill switch gone, probing starts again, and the link
+// comes up with DNS.
+func TestLinkBlockerGoneProbesAgain(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.blocker = &ipc.Blocker{App: ipc.BlockerWireGuard, Tunnels: []string{"wg-client-10"}}
+	h.connect(7, alice, config(1))
+	h.tick(probeWindow + 2*time.Minute)
+	if st := h.status(alice); st.Link != ipc.LinkNoAnswer || st.Blocker == nil {
+		t.Fatalf("%+v", st)
+	}
+	probes := h.tun.probes
+	h.tick(time.Minute)
+	if h.tun.probes != probes {
+		t.Fatal("probes after the window")
+	}
+	// A failed lookup is not a change.
+	h.findErr = errors.New("access denied")
+	h.tick(blockerRecheck)
+	if h.tun.probes != probes {
+		t.Fatal("a failed lookup re-armed the probes")
+	}
+	h.findErr = nil
+	h.tick(blockerRecheck)
+	if h.tun.probes != probes {
+		t.Fatal("re-armed while the blocker is still there")
+	}
+	h.blocker = nil // the kill switch is turned off
+	for finds := h.finds; h.finds == finds; {
+		h.tick(time.Second) // until the next lookup
+	}
+	if h.tun.probes != probes {
+		t.Fatal("probed before the lookup")
+	}
+	h.tick(time.Second)
+	if h.tun.probes != probes+1 {
+		t.Fatalf("%d probes after the blocker went, want 1", h.tun.probes-probes)
+	}
+	if st := h.status(alice); st.Blocker != nil || st.Link != ipc.LinkNoAnswer {
+		t.Fatalf("%+v", st)
+	}
+	h.tun.stats.LastHandshake = h.now
+	h.tick(time.Second)
+	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
+		t.Fatalf("after the handshake: %+v dns=%v", st, h.tun.dns)
+	}
+}
+
+func TestLinkNoBlockerNoRearm(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	h.connect(7, alice, config(1))
+	h.tick(probeWindow)
+	probes := h.tun.probes
+	h.tick(10 * time.Minute)
+	if h.tun.probes != probes {
+		t.Fatalf("%d probes after the window with no blocker ever found", h.tun.probes-probes)
 	}
 }

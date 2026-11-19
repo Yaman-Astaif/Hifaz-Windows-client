@@ -133,18 +133,24 @@ func start() (*server, error) {
 		return nil, fmt.Errorf("creating the pipe: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	tun := tunnel.New(func(msg string, args ...any) { slog.Info(msg, args...) })
 	s := &server{
 		ln: ln, logf: logf, ctx: ctx, cancel: cancel,
 		slots: make(chan struct{}, maxConns), conns: map[*ipc.Conn]struct{}{},
 		engine: daemon.New(daemon.Options{
-			Tunnel: tunnel.New(func(msg string, args ...any) { slog.Info(msg, args...) }),
-			Pins:   daemon.NewFileStore(filepath.Join(dir, "servers.json")),
-			Policy: loadPolicy,
-			Log:    func(msg string, args ...any) { slog.Info(msg, args...) },
+			Tunnel:      tun,
+			Pins:        daemon.NewFileStore(filepath.Join(dir, "servers.json")),
+			Policy:      loadPolicy,
+			Log:         func(msg string, args ...any) { slog.Info(msg, args...) },
+			FindBlocker: tun.FindKillSwitch, // read-only
 		}),
 	}
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go s.serve()
+	go func() {
+		defer s.wg.Done()
+		s.engine.Run(ctx) // until stop cancels ctx
+	}()
 	return s, nil
 }
 

@@ -63,6 +63,10 @@ func (f *fakeTunnel) Down() error {
 
 func (f *fakeTunnel) Stats() (daemon.Stats, error) { return daemon.Stats{}, nil }
 
+func (f *fakeTunnel) SetDNS(bool) error { return nil }
+
+func (f *fakeTunnel) Probe() error { return nil }
+
 func (f *fakeTunnel) state() (bool, *protocol.TunnelConfig, protocol.Key, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -348,6 +352,10 @@ func TestEnrollSignInAndFollow(t *testing.T) {
 	v := h.signIn()
 	if v.Session == nil || v.Session.Address != "10.98.10.4/32" {
 		t.Fatalf("connected view %+v", v.Session)
+	}
+	// The tunnel is up; the server has not answered yet.
+	if v.Session.Link != string(ipc.LinkWaiting) {
+		t.Fatalf("link %q", v.Session.Link)
 	}
 	up, cfg, psk, _ := h.tun.state()
 	if !up || cfg.Version != 1 || psk != h.srv.Device("d_0001").PSK {

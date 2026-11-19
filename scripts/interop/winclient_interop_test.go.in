@@ -43,6 +43,8 @@ func (n *nopTun) Up(*protocol.TunnelConfig, protocol.Key, protocol.Key) error {
 func (n *nopTun) Reconfigure(*protocol.TunnelConfig) error { return nil }
 func (n *nopTun) Down() error                              { n.up = false; return nil }
 func (n *nopTun) Stats() (daemon.Stats, error)             { return daemon.Stats{}, nil }
+func (n *nopTun) SetDNS(bool) error                        { return nil }
+func (n *nopTun) Probe() error                             { return nil }
 
 type winEnv struct {
 	clk  *clock.Fake

@@ -87,6 +87,18 @@ type SessionView struct {
 	LastHandshake time.Time `json:"last_handshake,omitzero"`
 	RxBytes       uint64    `json:"rx_bytes"`
 	TxBytes       uint64    `json:"tx_bytes"`
+	// Link: "waiting" for the server's first answer, "up", or "no_answer";
+	// empty from a service that does not tell (treated as up). Blocker
+	// says what keeps the server from answering, when known.
+	Link    string       `json:"link,omitempty"`
+	Blocker *BlockerView `json:"blocker,omitempty"`
+}
+
+// BlockerView names what blocks the server: App "wireguard" (the WireGuard
+// app's kill switch) and, if known, the names of its tunnels.
+type BlockerView struct {
+	App     string   `json:"app"`
+	Tunnels []string `json:"tunnels,omitempty"`
 }
 
 // UpdateView says which version the server needs and where to get it.
