@@ -479,6 +479,10 @@ func (h *windowHost) onPageMessage(raw string) {
 		h.pushApp()
 		h.pushPrefs()
 		h.pushView()
+	case r.testNotification:
+		if h.prefs.Notifications {
+			h.eval("onNotificationTest", h.showNotification("notifyTest", "diagnostics"))
+		}
 	case r.prefs != nil:
 		h.setPrefs(*r.prefs)
 	case r.err != "":
@@ -510,8 +514,7 @@ func (h *windowHost) pushView() {
 	if v.Screen != app.ScreenConnected || key == "notifyRestored" {
 		h.blockedNotification = false
 	}
-	iconic, _, _ := pIsIconic.Call(uintptr(h.hwnd))
-	if key != "" && h.prefs.Notifications && (!h.visible() || iconic != 0) && h.showNotification(key, page) {
+	if key != "" && h.prefs.Notifications && h.showNotification(key, page) {
 		h.blockedNotification = key == "notifyBlocked"
 	}
 }
@@ -581,24 +584,31 @@ func (h *windowHost) removeTray() {
 
 func (h *windowHost) showNotification(key, page string) bool {
 	if !h.trayAdded {
+		h.o.Log("notification unavailable: tray icon is missing", "event", key)
 		return false
 	}
 	d := h.trayData()
 	d.Flags = nifInfo
-	d.InfoFlags = 1 | 0x80 // NIIF_INFO | NIIF_RESPECT_QUIET_TIME
+	d.InfoFlags = 1 // NIIF_INFO; Windows still applies its notification settings
 	message, _ := windows.UTF16FromString(text(h.prefs.Lang, key))
 	title, _ := windows.UTF16FromString(text(h.prefs.Lang, "notifyTitle"))
 	copy(d.Info[:len(d.Info)-1], message)
 	copy(d.InfoTitle[:len(d.InfoTitle)-1], title)
 	if r, _, _ := pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(d))); r == 0 {
+		h.o.Log("Windows rejected the notification", "event", key)
 		return false
 	}
+	h.o.Log("notification submitted to Windows", "event", key)
 	h.notificationPage = page
 	return true
 }
 
 func (h *windowHost) onTray(event uint32) {
 	switch event {
+	case ninBalloonShow:
+		h.o.Log("Windows displayed the notification")
+	case ninBalloonHide:
+		h.o.Log("Windows hid the notification")
 	case ninBalloonUserClick:
 		h.show()
 		h.eval("showPage", h.notificationPage)

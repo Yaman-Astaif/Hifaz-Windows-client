@@ -199,6 +199,7 @@
     $("p-theme").value = prefs.theme;
     $("p-autostart").checked = !!prefs.autostart;
     $("p-notifications").checked = !!prefs.notifications;
+    $("test-notification").disabled = !!view.busy || !prefs.notifications;
 
     // Each screen starts at the top. While an error shows, focusing a field
     // does not scroll: the error stays in view.
@@ -376,7 +377,11 @@
   });
   $("p-lang").addEventListener("change", (ev) => setPrefs({ lang: ev.target.value }));
   $("p-theme").addEventListener("change", (ev) => setPrefs({ theme: ev.target.value }));
-  $("p-notifications").addEventListener("change", (ev) => setPrefs({ notifications: ev.target.checked }));
+  $("p-notifications").addEventListener("change", (ev) => {
+    $("notification-test-result").textContent = "";
+    setPrefs({ notifications: ev.target.checked });
+  });
+  $("test-notification").addEventListener("click", () => send({ action: "test_notification" }));
   $("p-autostart").addEventListener("change", (ev) => setPrefs({ autostart: ev.target.checked }));
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
@@ -396,6 +401,9 @@
         $("e-name").value = "";
       }
       render();
+    },
+    onNotificationTest(sent) {
+      $("notification-test-result").textContent = t(sent ? "testNotificationSent" : "testNotificationFailed");
     },
     onPrefs(p) { prefs = Object.assign({}, prefs, p); setLang(prefs.lang); render(); },
     onApp(a) { app = Object.assign({}, app, a); render(); },

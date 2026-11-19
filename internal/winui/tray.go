@@ -8,6 +8,7 @@ import (
 // trayText holds the tray's words in both languages.
 var trayText = map[string]map[string]string{
 	"ar": {
+		"notifyTest":     "هذا إشعار اختباري من حِفاظ.",
 		"notifyTitle":    "حِفاظ",
 		"notifyBlocked":  "تحظر شبكة VPN أخرى الاتصال. افتح التشخيص لمعرفة السبب.",
 		"notifyRestored": "استُعيد اتصال حِفاظ.",
@@ -24,6 +25,7 @@ var trayText = map[string]map[string]string{
 		"noWebView":      "يحتاج حِفاظ إلى Microsoft Edge WebView2 Runtime. ثبّته من موقع Microsoft ثم شغّل حِفاظ مجدداً.",
 	},
 	"en": {
+		"notifyTest":     "This is a test notification from Hifaz.",
 		"notifyTitle":    "Hifaz",
 		"notifyBlocked":  "Another VPN is blocking the connection. Open Diagnostics for details.",
 		"notifyRestored": "Hifaz reconnected automatically.",

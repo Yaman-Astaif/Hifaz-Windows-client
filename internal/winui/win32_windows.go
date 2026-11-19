@@ -110,6 +110,8 @@ const (
 	nifIcon             = 0x02
 	nifTip              = 0x04
 	nifInfo             = 0x10
+	ninBalloonShow      = 0x0402
+	ninBalloonHide      = 0x0403
 	ninBalloonUserClick = 0x0405
 	nifShowTip          = 0x80
 	ninSelect           = 0x0400
