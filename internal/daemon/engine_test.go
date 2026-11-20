@@ -171,7 +171,8 @@ func config(version int64, allowed ...string) map[string]any {
 
 func (h *harness) sessionDoc(nonce string, cfg map[string]any) *protocol.SignedDocument {
 	return h.sign(h.id, map[string]any{"type": protocol.TypeSession, "nonce": nonce,
-		"status": protocol.StatusConnected, "session_token": "tok", "config": cfg})
+		"status": protocol.StatusConnected, "session_id": "session", "session_token": "tok",
+		"expires_at": h.now.Add(8 * time.Hour), "config": cfg})
 }
 
 func (h *harness) register(c Caller) {
@@ -277,7 +278,7 @@ func TestConnectUpdateDisconnect(t *testing.T) {
 
 	// The server ends the session: the tunnel goes down with the reason.
 	ended := h.sign(h.id, map[string]any{"type": protocol.TypeSession, "nonce": h.nonce(alice),
-		"status": protocol.StatusEnded, "reason": protocol.ReasonIdle})
+		"status": protocol.StatusEnded, "session_id": "session", "reason": protocol.ReasonIdle})
 	r = h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: ended})
 	if r.Error != nil || h.tun.up || r.Status.State != ipc.StateIdle || r.Status.LastError != protocol.ReasonIdle {
 		t.Fatalf("ended: %v %+v", r.Error, r.Status)
@@ -475,7 +476,7 @@ func TestEverySignInStartsAFreshTunnel(t *testing.T) {
 	h.register(alice)
 	ended := func(reason string) {
 		doc := h.sign(h.id, map[string]any{"type": protocol.TypeSession, "nonce": h.nonce(alice),
-			"status": protocol.StatusEnded, "reason": reason})
+			"status": protocol.StatusEnded, "session_id": "session", "reason": reason})
 		if r := h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: doc}); r.Error != nil {
 			t.Fatal(r.Error)
 		}
@@ -863,5 +864,42 @@ func TestKillSwitchEnabledWhileConnected(t *testing.T) {
 	h.tick(linkPoll)
 	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
 		t.Fatalf("after recovery: %+v, DNS %v", st, h.tun.dns)
+	}
+}
+
+func TestSignedSessionDeadline(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice)
+	doc := func(id string, expiry time.Time) *protocol.SignedDocument {
+		return h.sign(h.id, map[string]any{"type": protocol.TypeSession, "nonce": h.nonce(alice),
+			"status": protocol.StatusConnected, "session_id": id, "expires_at": expiry, "config": config(1)})
+	}
+	connect := func(expiry time.Time) *ipc.Response {
+		return h.do(7, alice, ipc.Request{Op: ipc.OpConnect, Server: server, Document: doc("active", expiry),
+			PrivateKey: make32(1), PSK: make32(2)})
+	}
+	for _, invalid := range []time.Time{{}, h.now} {
+		if r := connect(invalid); code(r) != ipc.ErrVerify || h.tun.ups != 0 {
+			t.Fatalf("invalid deadline %v: error=%v, tunnel ups=%d", invalid, r.Error, h.tun.ups)
+		}
+	}
+	if r := connect(h.now.Add(3 * time.Second)); r.Error != nil {
+		t.Fatal(r.Error)
+	}
+	h.tick(time.Second)
+	refreshed := h.now.Add(5 * time.Second)
+	if r := h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: doc("active", refreshed)}); r.Error != nil {
+		t.Fatal(r.Error)
+	}
+	if r := h.do(7, alice, ipc.Request{Op: ipc.OpUpdate, Document: doc("other", refreshed.Add(time.Hour))}); code(r) != ipc.ErrVerify {
+		t.Fatalf("other session update: %v", r.Error)
+	}
+	h.tick(4 * time.Second)
+	if !h.tun.up {
+		t.Fatal("tunnel went down before refreshed deadline")
+	}
+	h.tick(time.Second)
+	if st := h.status(alice); h.tun.up || st.State != ipc.StateIdle || st.LastError != protocol.ReasonTimeLimit {
+		t.Fatalf("expired tunnel: up=%v, status=%+v", h.tun.up, st)
 	}
 }

@@ -101,6 +101,9 @@ type owner struct {
 	caller      Caller
 	server      string
 	cfg         *protocol.TunnelConfig
+	sessionID   string
+	expiresAt   time.Time
+	issuedAt    time.Time
 	connectedAt time.Time
 	link        *link
 }
@@ -342,7 +345,8 @@ func (e *Engine) connect(conn uint64, c Caller, req *ipc.Request) *ipc.Response 
 	if e.owner != nil && e.owner.caller.SID != c.SID {
 		return fail(ipc.ErrBusy, "")
 	}
-	cfg, errResp := e.checkSessionLocked(c, server, req.Document, true)
+	var session protocol.Session
+	cfg, errResp := e.checkSessionLocked(c, server, req.Document, &session, true)
 	if errResp != nil {
 		return errResp
 	}
@@ -363,7 +367,11 @@ func (e *Engine) connect(conn uint64, c Caller, req *ipc.Request) *ipc.Response 
 		return fail(ipc.ErrTunnel, err.Error())
 	}
 	now := e.now()
-	e.owner = &owner{conn: conn, caller: c, server: server, cfg: cfg, connectedAt: now.UTC(), link: newLink(now)}
+	e.owner = &owner{conn: conn, caller: c, server: server, cfg: cfg, sessionID: session.SessionID,
+		expiresAt: session.ExpiresAt, issuedAt: session.IssuedAt, connectedAt: now.UTC(), link: newLink(now)}
+	if e.expireLocked(now) {
+		return fail(ipc.ErrVerify, "session expired")
+	}
 	delete(e.lastErrs, c.SID)
 	e.setStateLocked(ipc.StateConnected)
 	e.log("tunnel up; waiting for the server to answer", "sid", c.SID, "server", server, "config", cfg.Version)
@@ -377,16 +385,18 @@ func (e *Engine) update(conn uint64, c Caller, req *ipc.Request) *ipc.Response {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.owner == nil || e.owner.conn != conn {
+	if e.expireLocked(e.now()) || e.owner == nil || e.owner.conn != conn {
 		return fail(ipc.ErrNotOwner, "")
 	}
-	cfg, errResp := e.checkSessionLocked(c, e.owner.server, req.Document, false)
+	var session protocol.Session
+	cfg, errResp := e.checkSessionLocked(c, e.owner.server, req.Document, &session, false)
 	if errResp != nil {
 		return errResp
 	}
 	if cfg == nil { // the session ended; the reason is in lastErrs
 		return &ipc.Response{Status: e.statusLocked(c)}
 	}
+	e.owner.expiresAt, e.owner.issuedAt = session.ExpiresAt, session.IssuedAt
 	if cfg.Version > e.owner.cfg.Version {
 		newKey := cfg.ServerPublicKey != e.owner.cfg.ServerPublicKey
 		if err := e.tunnel.Reconfigure(cfg); err != nil {
@@ -424,7 +434,7 @@ func (e *Engine) disconnect(conn uint64, c Caller) *ipc.Response {
 // returns its configuration, checked against the policy. For a session that
 // has ended it takes the tunnel down and returns (nil, nil); at connect time
 // an ended session is an error.
-func (e *Engine) checkSessionLocked(c Caller, server string, doc *protocol.SignedDocument, connecting bool) (*protocol.TunnelConfig, *ipc.Response) {
+func (e *Engine) checkSessionLocked(c Caller, server string, doc *protocol.SignedDocument, s *protocol.Session, connecting bool) (*protocol.TunnelConfig, *ipc.Response) {
 	rec, ok, err := e.pins.Load(c.SID, server)
 	if err != nil {
 		e.log("reading server identities failed", "err", err)
@@ -442,9 +452,11 @@ func (e *Engine) checkSessionLocked(c Caller, server string, doc *protocol.Signe
 		e.failLocked(c, connecting, ipc.ErrServerNotAllowed)
 		return nil, fail(ipc.ErrServerNotAllowed, "")
 	}
-	var s protocol.Session
-	if err := e.verifyLocked(c, *doc, pin, protocol.TypeSession, server, &s); err != nil {
+	if err := e.verifyLocked(c, *doc, pin, protocol.TypeSession, server, s); err != nil {
 		return nil, fail(ipc.ErrVerify, err.Error())
+	}
+	if !connecting && (s.SessionID != e.owner.sessionID || s.IssuedAt.Before(e.owner.issuedAt)) {
+		return nil, fail(ipc.ErrVerify, "session update does not match the active session or is older")
 	}
 	if s.Status != protocol.StatusConnected {
 		if connecting {
@@ -457,6 +469,13 @@ func (e *Engine) checkSessionLocked(c Caller, server string, doc *protocol.Signe
 		e.log("session ended by the server", "reason", reason)
 		e.downLocked(reason)
 		return nil, nil
+	}
+	if s.SessionID == "" || s.ExpiresAt.IsZero() {
+		return nil, fail(ipc.ErrVerify, "session ID and deadline required")
+	}
+	if !e.now().Before(s.ExpiresAt) {
+		e.failLocked(c, connecting, protocol.ReasonTimeLimit)
+		return nil, fail(ipc.ErrVerify, "session expired")
 	}
 	cfg, err := s.Config.Parse()
 	if err != nil {
@@ -513,13 +532,23 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
+// expireLocked tears down a tunnel whose signed session deadline has passed.
+func (e *Engine) expireLocked(now time.Time) bool {
+	if e.owner == nil || now.Before(e.owner.expiresAt) {
+		return false
+	}
+	e.log("signed session deadline reached")
+	e.downLocked(protocol.ReasonTimeLimit)
+	return true
+}
+
 // checkLink moves the owner's link state on: DNS on when the server
 // answers, off when it does not, a probe while it does not, and a look for
 // what blocks it. Only Run calls it.
 func (e *Engine) checkLink() {
 	e.mu.Lock()
 	o := e.owner
-	if o == nil {
+	if o == nil || e.expireLocked(e.now()) {
 		e.mu.Unlock()
 		return
 	}
