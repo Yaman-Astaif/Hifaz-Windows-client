@@ -30,7 +30,8 @@ main {
   scroll-padding-bottom: 140px;
 }
 main > section { padding-bottom: 16px; }
-main > section[data-page] { padding-bottom: 0; } /* its bar has the space */
+main > section[data-page],
+main > section[data-screen="enroll_mfa"] { padding-bottom: 0; } /* the action bar supplies the space */
 /* Tighter than the web pages, so most screens fit without scrolling. */
 h1 { margin: 0 0 2px; }
 .sub { margin: 0 0 14px; }
@@ -87,6 +88,13 @@ label.inline.check input { width: 18px; height: 18px; margin: 0; accent-color: v
   background: var(--bg);
   border-top: 1px solid transparent;
 }
+.actions-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.actions-split > .btn:first-child { grid-column: 1 / -1; }
+.actions-split > .btn + .btn { margin-top: 0; }
 /* In a card: the card's own colour, out to its padding and down to its
    rounded bottom (the card is 16px 18px padding, 12px radius, 1px border).
    The buttons sit as far below the last field as on the web pages. */

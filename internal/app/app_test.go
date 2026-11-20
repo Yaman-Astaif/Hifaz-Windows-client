@@ -317,6 +317,31 @@ func (h *harness) enroll() {
 	}
 }
 
+func TestEnrollmentBackAndCancel(t *testing.T) {
+	h := newHarness(t)
+	defer h.stop()
+	h.srv.AddUser("alice", "pw", false)
+	link, _ := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_back"})
+	if v := h.wait(ScreenSetup); v.Link != link {
+		t.Fatal("Back did not preserve the enrollment link")
+	}
+	h.ctrl.Do(Action{Name: "enroll_link", Link: link})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.wait(ScreenEnrollMFA)
+	h.ctrl.Do(Action{Name: "enroll_back"})
+	h.wait(ScreenEnrollPassword)
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.wait(ScreenEnrollMFA)
+	h.ctrl.Do(Action{Name: "enroll_cancel"})
+	if v := h.wait(ScreenSetup); v.Link != "" {
+		t.Fatal("Cancel kept the enrollment link")
+	}
+}
+
 func (h *harness) signIn() View {
 	h.t.Helper()
 	h.ctrl.Do(Action{Name: "signin", Password: "pw"})

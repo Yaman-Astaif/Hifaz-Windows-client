@@ -236,6 +236,8 @@ func (c *Controller) Do(a Action) {
 			c.enrollPassword(a.Password, a.OTP, a.DeviceName)
 		case "enroll_mfa":
 			c.enrollMFA(a.Code, a.DeviceName)
+		case "enroll_back":
+			c.enrollBack()
 		case "enroll_cancel":
 			c.enrollCancel()
 		case "add_server":
@@ -290,6 +292,27 @@ func (c *Controller) enrollCancel() {
 		return
 	}
 	c.setView(View{Screen: ScreenSetup})
+}
+
+func (c *Controller) enrollBack() {
+	e := c.enroll
+	if e == nil {
+		return
+	}
+	switch c.view.Screen {
+	case ScreenEnrollMFA:
+		e.stepToken = ""
+		c.setView(View{Screen: ScreenEnrollPassword, Enroll: c.enrollView(), Replacing: e.replacing})
+	case ScreenEnrollPassword:
+		if e.link.Fingerprint == "" {
+			c.setView(View{Screen: ScreenEnrollFingerprint, Enroll: c.enrollView(), Replacing: e.replacing})
+			return
+		}
+		fallthrough
+	case ScreenEnrollFingerprint:
+		c.enroll = nil
+		c.setView(View{Screen: ScreenSetup, Link: e.raw, Replacing: e.replacing})
+	}
 }
 
 func (c *Controller) enrollLink(raw string) {

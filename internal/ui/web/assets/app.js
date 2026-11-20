@@ -13,6 +13,9 @@
   let app = { version: "", developer: "" };
   let page = ""; // "", "settings" or "about": pages of the window itself
   let lastScreen = "";
+  let enrollmentFromSettings = false;
+  let submittedLink = "";
+  let settingsOpener = null;
   let lastShown = ""; // page and screen, for scrolling back to the top
   let lastError = "null";
   let acted = false; // the user submitted or pressed a button since the last answer
@@ -174,7 +177,7 @@
 
     // Each screen starts at the top. While an error shows, focusing a field
     // does not scroll: the error stays in view.
-    const shown = page + "/" + view.screen;
+    const shown = page || view.screen;
     if (shown !== lastShown) { document.querySelector("main").scrollTop = 0; lastShown = shown; }
     const focus = { preventScroll: !err.hidden };
 
@@ -234,7 +237,12 @@
   function onSubmit(id, f) {
     $(id).addEventListener("submit", (ev) => { ev.preventDefault(); if (!view.busy) { acted = true; f(); } });
   }
-  onSubmit("f-setup", () => act("enroll_link", { link: $("link").value.trim() }));
+  onSubmit("f-setup", () => {
+    const link = $("link").value.trim();
+    if (link !== submittedLink) $("e-name").value = "";
+    submittedLink = link;
+    act("enroll_link", { link });
+  });
   onSubmit("f-enroll", () => act("enroll_password",
     { password: $("e-password").value, otp: $("e-otp").value, device_name: $("e-name").value }));
   onSubmit("f-mfa", () => act("enroll_mfa", { code: $("m-code").value, device_name: $("e-name").value }));
@@ -248,13 +256,53 @@
     act("signin_otp", { otp });
   });
 
+  function showPage(next) {
+    const previous = page;
+    if (previous === next) return;
+    if (!previous && next) settingsOpener = document.activeElement;
+    page = next;
+    $("b-settings").setAttribute("aria-expanded", String(!!page));
+    render();
+
+    if (!page) {
+      const target = settingsOpener;
+      settingsOpener = null;
+      if (target && target !== document.body && !target.closest("[hidden]") && !target.disabled) target.focus();
+      else $("b-settings").focus();
+      return;
+    }
+    const target = previous === "about" && page === "settings"
+      ? document.querySelector('[data-page-go="about"]')
+      : document.querySelector('section[data-page="' + page + '"] h1');
+    if (target) {
+      if (target.tagName === "H1") target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  }
+
   all("[data-act]").forEach((el) => el.addEventListener("click", () => {
-    if (el.dataset.act === "add_server" || el.dataset.act === "enroll_cancel") page = "";
+    const action = el.dataset.act;
+    if (action === "add_server") {
+      enrollmentFromSettings = page === "settings";
+      $("link").value = "";
+      $("e-name").value = "";
+      showPage("");
+    } else if (action === "enroll_cancel") {
+      $("link").value = "";
+      $("e-name").value = "";
+      if (enrollmentFromSettings) showPage("settings");
+      enrollmentFromSettings = false;
+    }
     acted = true;
-    act(el.dataset.act);
+    act(action);
   }));
-  all("[data-page-go]").forEach((el) => el.addEventListener("click", () => { page = el.dataset.pageGo; render(); }));
-  $("b-settings").addEventListener("click", () => { page = page === "settings" ? "" : "settings"; render(); });
+  all("[data-page-go]").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.pageGo)));
+  $("b-settings").addEventListener("click", () => showPage(page ? "" : "settings"));
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape" || !page || ev.defaultPrevented) return;
+    ev.preventDefault();
+    showPage(page === "about" ? "settings" : "");
+  });
   $("b-download").addEventListener("click", () => {
     if (view.update && view.update.download_url) send({ action: "open_url", url: view.update.download_url });
   });
@@ -265,7 +313,7 @@
     const b = ev.currentTarget;
     if (Date.now() - removeArmed < 6000) {
       removeArmed = 0;
-      page = "";
+      showPage("");
       act("remove_account");
       return;
     }
@@ -299,11 +347,17 @@
       if (!all("section[data-screen]").some((s) => s.dataset.screen === view.screen)) {
         view = Object.assign({}, view, { screen: "loading" });
       }
+      if (view.screen === "signin" || view.screen === "connected") {
+        enrollmentFromSettings = false;
+        submittedLink = "";
+        $("link").value = "";
+        $("e-name").value = "";
+      }
       render();
     },
     onPrefs(p) { prefs = Object.assign({}, prefs, p); setLang(prefs.lang); render(); },
     onApp(a) { app = Object.assign({}, app, a); render(); },
-    showPage(p) { page = p || ""; render(); },
+    showPage(p) { showPage(p || ""); },
   };
 
   setLang(prefs.lang);

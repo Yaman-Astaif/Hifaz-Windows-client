@@ -218,6 +218,28 @@ try {
     check(f.shown && f.top >= f.mainTop && f.bottom <= f.mainBottom, `two-step setup, ${lang}: a new error is scrolled into view`);
   }
 
+  for (const lang of ["ar", "en"]) {
+    await show(cases[8][1], "", { lang, theme: "light" });
+    const navigation = await cdp.evaluate(`(() => {
+      const settings = document.getElementById("b-settings");
+      const about = document.querySelector('[data-page-go="about"]');
+      const done = document.querySelector('[data-page-go=""]');
+      const connected = document.querySelector('[data-screen="connected"]');
+      settings.focus();
+      settings.click();
+      const opened = settings.getAttribute("aria-expanded") === "true" &&
+        document.activeElement === document.querySelector('#settings-page h1');
+      about.click();
+      const aboutShown = !document.querySelector('[data-page="about"]').hidden;
+      document.querySelector('[data-page-go="settings"]').click();
+      const aboutFocusRestored = document.activeElement === about;
+      done.click();
+      return { opened, aboutShown, aboutFocusRestored, returned: !connected.hidden &&
+        settings.getAttribute("aria-expanded") === "false" && document.activeElement === settings };
+    })()`);
+    check(Object.values(navigation).every(Boolean), `connected → Settings → About → Settings → connected, ${lang}`);
+  }
+
   // Back to the first screen, as the app left it.
   await cdp.send("Emulation.clearDeviceMetricsOverride");
   await show({ screen: "setup" }, "", { lang: "ar", theme: "light" });
