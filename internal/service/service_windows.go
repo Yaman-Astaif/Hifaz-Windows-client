@@ -32,8 +32,13 @@ import (
 const Name = "Hifaz"
 
 const (
-	maxConns = 64      // concurrent app connections
-	logLimit = 1 << 20 // bytes per log file
+	maxConns          = 64
+	maxPending        = 8
+	maxConnsPerSID    = 4
+	firstFrameTimeout = 5 * time.Second
+	idleFrameTimeout  = 5 * time.Minute
+	writeFrameTimeout = 5 * time.Second
+	logLimit          = 1 << 20 // bytes per log file
 )
 
 // dataSDDL protects the service's folder: SYSTEM and administrators only,
@@ -96,12 +101,13 @@ type server struct {
 	logf   *logfile.File
 	ctx    context.Context
 	cancel context.CancelFunc
-	slots  chan struct{}
 	nextID atomic.Uint64
 	wg     sync.WaitGroup
 
-	mu    sync.Mutex
-	conns map[*ipc.Conn]struct{}
+	mu      sync.Mutex
+	conns   map[*ipc.Conn]string // empty SID while awaiting the first frame
+	pending int
+	bySID   map[string]int
 }
 
 func start() (*server, error) {
@@ -136,7 +142,7 @@ func start() (*server, error) {
 	tun := tunnel.New(func(msg string, args ...any) { slog.Info(msg, args...) })
 	s := &server{
 		ln: ln, logf: logf, ctx: ctx, cancel: cancel,
-		slots: make(chan struct{}, maxConns), conns: map[*ipc.Conn]struct{}{},
+		conns: make(map[*ipc.Conn]string), bySID: make(map[string]int),
 		engine: daemon.New(daemon.Options{
 			Tunnel:      tun,
 			Pins:        daemon.NewFileStore(filepath.Join(dir, "servers.json")),
@@ -196,15 +202,14 @@ func (s *server) serve() {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		select {
-		case s.slots <- struct{}{}:
-		default:
-			slog.Warn("too many connections; refusing one")
+		s.mu.Lock()
+		if s.ctx.Err() != nil || s.pending >= maxPending || len(s.conns) >= maxConns {
+			s.mu.Unlock()
 			conn.Close()
 			continue
 		}
-		s.mu.Lock()
-		s.conns[conn] = struct{}{}
+		s.conns[conn] = ""
+		s.pending++
 		s.mu.Unlock()
 		s.wg.Add(1)
 		go s.handle(conn)
@@ -217,15 +222,26 @@ func (s *server) handle(conn *ipc.Conn) {
 		s.engine.Closed(id)
 		conn.Close()
 		s.mu.Lock()
+		if sid := s.conns[conn]; sid == "" {
+			s.pending--
+		} else {
+			s.bySID[sid]--
+			if s.bySID[sid] == 0 {
+				delete(s.bySID, sid)
+			}
+		}
 		delete(s.conns, conn)
 		s.mu.Unlock()
-		<-s.slots
 		s.wg.Done()
 	}()
 	var caller daemon.Caller
 	for {
 		var req ipc.Request
-		if err := ipc.Read(conn, &req); err != nil {
+		timeout := idleFrameTimeout
+		if caller.SID == "" {
+			timeout = firstFrameTimeout
+		}
+		if err := pipeFrame(conn, timeout, func() error { return ipc.Read(conn, &req) }); err != nil {
 			req.Wipe()
 			return
 		}
@@ -236,13 +252,40 @@ func (s *server) handle(conn *ipc.Conn) {
 				slog.Warn("identifying a client", "err", err)
 				return
 			}
+			s.mu.Lock()
+			if s.bySID[sid] >= maxConnsPerSID {
+				s.mu.Unlock()
+				req.Wipe()
+				return
+			}
+			s.pending--
+			s.bySID[sid]++
+			s.conns[conn] = sid
+			s.mu.Unlock()
 			caller = daemon.Caller{SID: sid, Session: session}
 		}
 		resp := s.engine.Handle(s.ctx, id, caller, &req)
-		if err := ipc.Write(conn, resp); err != nil {
+		if err := pipeFrame(conn, writeFrameTimeout, func() error { return ipc.Write(conn, resp) }); err != nil {
 			return
 		}
 	}
+}
+
+// pipeFrame bounds a whole frame, including partial reads and writes.
+// Closing the connection cancels its pending overlapped I/O. Request
+// processing runs outside this deadline, including long-poll watches.
+func pipeFrame(conn *ipc.Conn, timeout time.Duration, transfer func() error) error {
+	done := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		conn.Close()
+		close(done)
+	})
+	err := transfer()
+	if !timer.Stop() {
+		<-done
+		return context.DeadlineExceeded
+	}
+	return err
 }
 
 func (s *server) stop() {
