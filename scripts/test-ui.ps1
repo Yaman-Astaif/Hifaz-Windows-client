@@ -114,7 +114,8 @@ try {
   }
   if ($app.HasExited) { Write-Host "the app exited with code $($app.ExitCode)" }
   Check ($hwnd -ne [IntPtr]::Zero) "window created"
-  $deadline = (Get-Date).AddSeconds(30)
+  # WebView2 initialization can take longer on a cold hosted runner.
+  $deadline = (Get-Date).AddSeconds(90)
   while (-not [W]::IsWindowVisible($hwnd) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
   Check ([W]::IsWindowVisible($hwnd)) "window shown"
   $style = [W]::GetWindowLong($hwnd, -16)

@@ -11,8 +11,8 @@ the Hifaz repository), so it works with any Hifaz server from 0.8.0 on
 Nothing in it is specific to one organisation: no server names, domains or
 settings are built in.
 
-Current release: **0.1.0**. Needs a Hifaz server **0.8.0 or later**; with
-an older server the app says so.
+See [GitHub Releases](https://github.com/Yaman-Astaif/Hifaz-Windows-client/releases/latest)
+for the current Windows installers.
 
 ## How it is built
 
