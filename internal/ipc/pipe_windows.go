@@ -361,6 +361,10 @@ func (c *Conn) Close() error {
 // process at the client end. Windows allows this only after the client has
 // written to the pipe, so call it after the first message has been read.
 func (c *Conn) ClientIdentity() (sid string, session uint32, err error) {
+	if !c.begin() {
+		return "", 0, io.ErrClosedPipe
+	}
+	defer c.inflight.Done()
 	// Impersonation applies to the calling OS thread; keep it to this one.
 	runtime.LockOSThread()
 	if r, _, e := procImpersonateNamedPipeClient.Call(uintptr(c.h)); r == 0 {
