@@ -48,8 +48,10 @@
         <input id="link" class="ltr" autocomplete="off" spellcheck="false" placeholder="https://…/login/enroll#…" required>
       </label>
       <p class="warn" data-t="replaceWarning" data-show="replacing" hidden></p>
-      <button class="btn" type="submit" data-t="continue"></button>
-      <button class="btn alt" type="button" data-act="enroll_cancel" data-show="replacing" data-t="cancel" hidden></button>
+      <div class="actions">
+        <button class="btn" type="submit" data-t="continue"></button>
+        <button class="btn alt" type="button" data-act="enroll_cancel" data-show="replacing" data-t="cancel" hidden></button>
+      </div>
     </form>
     <p class="hint" data-t="setupReturning" data-show="first_setup"></p>
   </section>
@@ -64,8 +66,10 @@
       </dl>
       <p class="pw fp" data-field="enroll.fingerprint_display"></p>
       <p class="hint start" data-t="fpHint"></p>
-      <button class="btn" type="button" data-act="enroll_confirm_fingerprint" data-t="fpMatches"></button>
-      <button class="btn alt" type="button" data-act="enroll_cancel" data-t="fpDiffers"></button>
+      <div class="actions">
+        <button class="btn" type="button" data-act="enroll_confirm_fingerprint" data-t="fpMatches"></button>
+        <button class="btn alt" type="button" data-act="enroll_cancel" data-t="fpDiffers"></button>
+      </div>
     </div>
   </section>
 
@@ -93,8 +97,10 @@
         <input id="e-name" maxlength="64" autocomplete="off" spellcheck="false">
         <span class="opt" data-t="devNameHint"></span>
       </label>
-      <button class="btn" type="submit" data-t="continue"></button>
-      <button class="btn alt" type="button" data-act="enroll_cancel" data-t="cancel"></button>
+      <div class="actions">
+        <button class="btn" type="submit" data-t="continue"></button>
+        <button class="btn alt" type="button" data-act="enroll_cancel" data-t="cancel"></button>
+      </div>
     </form>
   </section>
 
@@ -108,12 +114,14 @@
         <li data-t="mfaStep2"></li>
         <li data-t="mfaStep3"></li>
       </ol>
-      <canvas id="qr" class="qr" width="200" height="200" role="img" data-t-label="qrLabel"></canvas>
+      <canvas id="qr" class="qr" width="180" height="180" role="img" data-t-label="qrLabel"></canvas>
       <p class="secret" data-field="enroll.mfa_secret_spaced"></p>
       <label><span data-t="code"></span>
         <input id="m-code" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" required>
       </label>
-      <button class="btn" type="submit" data-t="confirm"></button>
+      <div class="actions">
+        <button class="btn" type="submit" data-t="confirm"></button>
+      </div>
     </form>
   </section>
 
@@ -133,7 +141,9 @@
       <label><span data-t="code"></span> <span class="opt" data-t="codeOptional"></span>
         <input id="s-otp" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
       </label>
-      <button class="btn" type="submit" data-t="connect"></button>
+      <div class="actions">
+        <button class="btn" type="submit" data-t="connect"></button>
+      </div>
     </form>
   </section>
 
@@ -145,8 +155,10 @@
       <label><span data-t="code"></span>
         <input id="o-code" class="code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000" required>
       </label>
-      <button class="btn" type="submit" data-t="connect"></button>
-      <button class="btn alt" type="button" data-act="signin_cancel" data-t="cancel"></button>
+      <div class="actions">
+        <button class="btn" type="submit" data-t="connect"></button>
+        <button class="btn alt" type="button" data-act="signin_cancel" data-t="cancel"></button>
+      </div>
     </form>
   </section>
 
@@ -167,7 +179,9 @@
         <dt data-t="routes"></dt><dd class="mono routes" data-field="session.routes_text"></dd>
       </dl>
       <p class="note" data-field="session.idle_note"></p>
-      <button class="btn alt" type="button" data-act="disconnect" data-t="disconnect"></button>
+      <div class="actions">
+        <button class="btn alt" type="button" data-act="disconnect" data-t="disconnect"></button>
+      </div>
     </div>
   </section>
 
@@ -176,8 +190,10 @@
     <h1 data-t="updateTitle"></h1>
     <p class="sub" data-field="update.text"></p>
     <div class="card">
-      <button id="b-download" class="btn" type="button" data-show="update.download_url" data-t="download" hidden></button>
-      <button class="btn alt" type="button" data-act="enroll_cancel" data-t="back"></button>
+      <div class="actions">
+        <button id="b-download" class="btn" type="button" data-show="update.download_url" data-t="download" hidden></button>
+        <button class="btn alt" type="button" data-act="enroll_cancel" data-t="back"></button>
+      </div>
     </div>
   </section>
 
@@ -210,7 +226,9 @@
       <button id="b-remove" class="btn alt danger" type="button" data-t="removeDevice"></button>
     </div>
     <button class="btn alt back" type="button" data-page-go="about" data-t="about"></button>
-    <button class="btn" type="button" data-page-go="" data-t="back"></button>
+    <div class="actions">
+      <button class="btn" type="button" data-page-go="" data-t="back"></button>
+    </div>
   </section>
 
   <!-- About -->
@@ -235,7 +253,9 @@
       </ul>
       <p class="hint start" data-t="trademark"></p>
     </div>
-    <button class="btn" type="button" data-page-go="settings" data-t="back"></button>
+    <div class="actions">
+      <button class="btn" type="button" data-page-go="settings" data-t="back"></button>
+    </div>
   </section>
 </main>
 </body>

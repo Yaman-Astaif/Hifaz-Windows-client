@@ -67,7 +67,10 @@ type windowHost struct {
 	trayAdded      bool
 	taskbarCreated uint32
 
-	quitting bool
+	quitting          bool
+	moving            bool
+	dpiChangedOnMove  bool
+	dpiPendingRestore bool
 }
 
 // Run shows the window (unless Background) and runs the message loop until
@@ -177,6 +180,20 @@ func frame(dpi int) (w, h int32) {
 // empty if it cannot be found.
 func workArea(hwnd windows.HWND) rect {
 	mon, _, _ := pMonitorFromWindow.Call(uintptr(hwnd), 2 /* MONITOR_DEFAULTTONEAREST */)
+	return monitorWork(mon)
+}
+
+// workAreaAt is the work area of the monitor nearest to r; empty if it
+// cannot be found.
+func workAreaAt(r rect) rect {
+	mon, _, _ := pMonitorFromRect.Call(uintptr(unsafe.Pointer(&r)), 2 /* MONITOR_DEFAULTTONEAREST */)
+	return monitorWork(mon)
+}
+
+func monitorWork(mon uintptr) rect {
+	if mon == 0 {
+		return rect{}
+	}
 	mi := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
 	if r, _, _ := pGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
 		return rect{}
@@ -192,6 +209,22 @@ func (h *windowHost) placeWindow() {
 	r := placement(dpi, fw, fh, workArea(h.hwnd))
 	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(r.Left), uintptr(r.Top),
 		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+}
+
+// applyDPI sizes the window for its monitor while keeping the cursor-relative
+// position Windows supplies during a drag.
+func (h *windowHost) applyDPI(s rect, dpi int) {
+	fw, fh := frame(dpi)
+	r := dpiChanged(s, dpi, fw, fh, workAreaAt(s), h.moving)
+	pSetWindowPos.Call(uintptr(h.hwnd), 0, uintptr(r.Left), uintptr(r.Top),
+		uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+}
+
+func (h *windowHost) fitCurrentMonitor() {
+	var r rect
+	if ok, _, _ := pGetWindowRect.Call(uintptr(h.hwnd), uintptr(unsafe.Pointer(&r))); ok != 0 {
+		h.applyDPI(r, h.dpi())
+	}
 }
 
 // makeIcons draws the icons for the window's current scaling. The old ones
@@ -219,15 +252,9 @@ func (h *windowHost) makeIcons() {
 	}
 }
 
-// show brings the window back as it was: a minimized one is restored (to
-// maximized, if it was), a hidden one is shown in its last state, so a
-// maximized window stays maximized.
+// show restores a minimized window and shows a hidden one.
 func (h *windowHost) show() {
-	if r, _, _ := pIsIconic.Call(uintptr(h.hwnd)); r != 0 {
-		pShowWindow.Call(uintptr(h.hwnd), swRestore)
-	} else {
-		pShowWindow.Call(uintptr(h.hwnd), swShow)
-	}
+	pShowWindow.Call(uintptr(h.hwnd), swRestore)
 	pSetForegroundWindow.Call(uintptr(h.hwnd))
 	h.fitWebView(true)
 	if h.webview != nil {
@@ -291,20 +318,40 @@ func wndProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 		pDestroyWindow.Call(uintptr(hwnd))
 		return 0
 	case wmSize:
+		if w == 2 /* SIZE_MAXIMIZED */ {
+			// Maximized anyway (ShowWindow from a shortcut set to "Run:
+			// Maximized", or another program): back to the fixed size.
+			pShowWindow.Call(uintptr(hwnd), swRestore)
+			return 0
+		}
+		if w == 0 /* SIZE_RESTORED */ && h.dpiPendingRestore {
+			h.dpiPendingRestore = false // SetWindowPos can send WM_SIZE again.
+			h.fitCurrentMonitor()
+			h.makeIcons()
+		}
 		h.fitWebView(w != 1 /* SIZE_MINIMIZED */)
 		return 0
-	case wmGetMinMaxInfo:
-		// The user can resize the window, but not below the minimum page size.
-		dpi := h.dpi()
-		fw, fh := frame(dpi)
-		mmi := (*minMaxInfo)(osPointer(l))
-		mmi.MinTrackSize.X, mmi.MinTrackSize.Y = minTrackSize(dpi, fw, fh, workArea(hwnd))
-		return 0
+	case wmSysCommand:
+		// The window has one fixed size: no sizing, no maximizing.
+		if !allowSysCommand(w) {
+			return 0
+		}
+	case wmEnterSizeMove:
+		h.moving = true
+	case wmExitSizeMove:
+		h.moving = false
+		if h.dpiChangedOnMove {
+			h.dpiChangedOnMove = false
+			h.fitCurrentMonitor()
+		}
 	case wmDpiChanged:
-		// Take the size Windows suggests for the new monitor.
-		r := (*rect)(osPointer(l))
-		pSetWindowPos.Call(uintptr(hwnd), 0, uintptr(r.Left), uintptr(r.Top),
-			uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpNoZOrder|swpNoActivate)
+		if iconic, _, _ := pIsIconic.Call(uintptr(hwnd)); iconic != 0 {
+			h.dpiPendingRestore = true
+			return 0
+		}
+		h.dpiPendingRestore = false
+		h.dpiChangedOnMove = h.moving
+		h.applyDPI(*(*rect)(osPointer(l)), int(w>>16&0xffff))
 		h.makeIcons()
 		return 0
 	case wmClose:
