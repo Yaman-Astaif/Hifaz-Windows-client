@@ -371,26 +371,34 @@ func (c *Controller) enrollLink(raw string) {
 		return
 	}
 	client.SetPin(pin)
-	li, err := client.EnrollInfo(ctx, link.Token)
-	if err != nil {
-		c.fail(err)
-		return
-	}
-	if li.Kind != protocol.LinkDevice && li.Kind != protocol.LinkRenew {
-		c.fail(&protocol.APIError{Code: protocol.ErrCodeUseBrowser})
-		return
-	}
 	codeRequired := c.mfaSetLink != "" && c.mfaSetLink == link.Token
-	if !codeRequired {
-		c.mfaSetLink = ""
-	}
-	c.enroll = &enrollment{raw: raw, link: link, client: client, pin: pin, info: li, replacing: replacing,
+	c.enroll = &enrollment{raw: raw, link: link, client: client, pin: pin, replacing: replacing,
 		codeRequired: codeRequired}
-	screen := ScreenEnrollPassword
 	if link.Fingerprint == "" {
-		screen = ScreenEnrollFingerprint // an older link: the user compares the fingerprint
+		c.setView(View{Screen: ScreenEnrollFingerprint, Enroll: c.enrollView(), Replacing: replacing})
+		return
 	}
-	c.setView(View{Screen: screen, Enroll: c.enrollView(), Replacing: replacing})
+	c.loadEnrollInfo(ctx)
+}
+
+func (c *Controller) loadEnrollInfo(ctx context.Context) {
+	e := c.enroll
+	if e.info == nil {
+		li, err := e.client.EnrollInfo(ctx, e.link.Token)
+		if err != nil {
+			c.fail(err)
+			return
+		}
+		if li.Kind != protocol.LinkDevice && li.Kind != protocol.LinkRenew {
+			c.fail(&protocol.APIError{Code: protocol.ErrCodeUseBrowser})
+			return
+		}
+		e.info = li
+		if !e.codeRequired {
+			c.mfaSetLink = ""
+		}
+	}
+	c.setView(View{Screen: ScreenEnrollPassword, Enroll: c.enrollView(), Replacing: e.replacing})
 }
 
 func (c *Controller) showUpdate(info *protocol.Info) {
@@ -403,16 +411,22 @@ func (c *Controller) showUpdate(info *protocol.Info) {
 
 func (c *Controller) enrollView() *EnrollView {
 	e := c.enroll
-	return &EnrollView{Server: e.link.Server, Fingerprint: string(e.pin.Fingerprint), Kind: e.info.Kind,
-		Username: e.info.Username, Device: e.info.Device, NameEditable: e.info.NameEditable,
-		CodeRequired: e.codeRequired}
+	v := &EnrollView{Server: e.link.Server, Fingerprint: string(e.pin.Fingerprint), CodeRequired: e.codeRequired}
+	if e.info != nil {
+		v.Kind, v.Username, v.Device = e.info.Kind, e.info.Username, e.info.Device
+		v.NameEditable = e.info.NameEditable
+	}
+	return v
 }
 
 func (c *Controller) enrollConfirmFingerprint() {
-	if c.enroll == nil {
+	if c.enroll == nil || c.view.Screen != ScreenEnrollFingerprint {
 		return
 	}
-	c.setView(View{Screen: ScreenEnrollPassword, Enroll: c.enrollView(), Replacing: c.enroll.replacing})
+	c.setBusy(true)
+	ctx, cancel := c.ctx()
+	defer cancel()
+	c.loadEnrollInfo(ctx)
 }
 
 // checkOTP rejects incomplete codes before an authentication request.
@@ -429,7 +443,7 @@ func (c *Controller) checkOTP(code string, optional bool) bool {
 
 func (c *Controller) enrollPassword(password, otp, deviceName string) {
 	e := c.enroll
-	if e == nil {
+	if e == nil || c.view.Screen != ScreenEnrollPassword {
 		return
 	}
 	// Two-step verification is set up: an empty code would only count

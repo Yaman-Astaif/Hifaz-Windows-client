@@ -918,3 +918,41 @@ func TestSignInCodeAnswerLost(t *testing.T) {
 	h.ctrl.Do(Action{Name: "signin_otp", OTP: fakeserver.OTP})
 	h.wait(ScreenConnected)
 }
+
+func TestLegacyEnrollmentWaitsForFingerprint(t *testing.T) {
+	h := newHarness(t)
+	defer h.stop()
+	h.srv.AddUser("alice", "pw", false)
+	_, token := h.srv.NewLink(protocol.LinkDevice, "alice", "")
+	legacy := h.srv.URL() + "/login/enroll#" + token
+	h.ctrl.Do(Action{Name: "enroll_link", Link: legacy})
+	h.wait(ScreenEnrollFingerprint)
+	if got := h.srv.Requests(); got != 1 {
+		t.Fatalf("before confirmation got %d requests, want identity request only", got)
+	}
+	h.ctrl.Do(Action{Name: "enroll_password", Password: "pw"})
+	h.ctrl.Do(Action{Name: "enroll_cancel"})
+	h.wait(ScreenSetup)
+	if got := h.srv.Requests(); got != 1 {
+		t.Fatalf("after cancellation got %d requests, want identity request only", got)
+	}
+	h.ctrl.Do(Action{Name: "enroll_link", Link: legacy})
+	h.wait(ScreenEnrollFingerprint)
+	h.ctrl.Do(Action{Name: "enroll_confirm_fingerprint"})
+	if v := h.wait(ScreenEnrollPassword); v.Enroll.Username != "alice" {
+		t.Fatalf("enrollment view %+v", v.Enroll)
+	}
+	if got := h.srv.Requests(); got != 3 {
+		t.Fatalf("after confirmation got %d requests, want two identity requests and enrollment info", got)
+	}
+	h.ctrl.Do(Action{Name: "enroll_cancel"})
+	h.wait(ScreenSetup)
+	bad := legacy + "." + "Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q"
+	h.ctrl.Do(Action{Name: "enroll_link", Link: bad})
+	if v := h.waitError(); v.Code != ErrIdentityMismatch {
+		t.Fatalf("mismatched fingerprint error %q", v.Code)
+	}
+	if got := h.srv.Requests(); got != 4 {
+		t.Fatalf("mismatched fingerprint sent more than the identity request, got %d total", got)
+	}
+}
