@@ -61,7 +61,7 @@ func (c *Config) Parse() (*TunnelConfig, error) {
 		return nil, errors.New("tunnel configuration has no version")
 	}
 	if t.Address, err = netip.ParsePrefix(c.Address); err != nil || t.Address.Bits() == 0 ||
-		!usableUnicast(t.Address.Addr()) {
+		!UsableUnicast(t.Address.Addr()) {
 		return nil, fmt.Errorf("invalid tunnel address %q", c.Address)
 	}
 	if t.ServerPublicKey, err = ParseKey(c.ServerPublicKey); err != nil || t.ServerPublicKey.IsZero() {
@@ -85,7 +85,7 @@ func (c *Config) Parse() (*TunnelConfig, error) {
 	}
 	for _, s := range c.DNS.Servers {
 		a, err := netip.ParseAddr(s)
-		if err != nil || a.Zone() != "" || !usableUnicast(a) {
+		if err != nil || a.Zone() != "" || !UsableUnicast(a) {
 			return nil, fmt.Errorf("invalid DNS server %q", s)
 		}
 		t.DNSServers = append(t.DNSServers, a.Unmap())
@@ -112,7 +112,8 @@ func (c *Config) Parse() (*TunnelConfig, error) {
 	return t, nil
 }
 
-func usableUnicast(a netip.Addr) bool {
+// UsableUnicast reports whether a is a valid, specified, non-loopback unicast address.
+func UsableUnicast(a netip.Addr) bool {
 	return a.IsValid() && !a.IsUnspecified() && !a.IsMulticast() && !a.IsLoopback()
 }
 
@@ -126,7 +127,7 @@ func parseEndpoint(s string) (string, uint16, error) {
 		return "", 0, fmt.Errorf("invalid endpoint port %q", port)
 	}
 	if a, err := netip.ParseAddr(host); err == nil {
-		if a.Zone() != "" || !usableUnicast(a) {
+		if a.Zone() != "" || !UsableUnicast(a) {
 			return "", 0, fmt.Errorf("invalid endpoint address %q", host)
 		}
 		return a.Unmap().String(), uint16(p), nil
