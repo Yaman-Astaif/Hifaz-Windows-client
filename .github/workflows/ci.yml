@@ -48,16 +48,46 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.0.2
-          scripts\build.ps1 -Version 0.0.${{ github.run_number }} -Release
+          scripts\build.ps1 -Version 0.2.0 -Release
       - name: Install, check, remove (x64)
         shell: pwsh
-        run: scripts\test-install.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi
+        run: scripts\test-install.ps1 -Msi dist\Hifaz-0.2.0-x64.msi
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: UI test (installed app, window, page, screenshots)
         shell: pwsh
-        run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.0.${{ github.run_number }}-x64.msi -Out build\ui
+        run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.2.0-x64.msi -Out build\ui
+      - name: Verify upgrade from the latest public release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previous = "Hifaz-0.1.2-x64.msi"
+          gh release download v0.1.2 --pattern "$previous*" --dir build
+          if ($LASTEXITCODE -ne 0) { throw "Release download failed" }
+          $expected = ((Get-Content "build\$previous.sha256" -Raw).Trim() -split '\s+')[0]
+          if ((Get-FileHash "build\$previous").Hash -ne $expected) { throw "Published installer hash mismatch" }
+          function Run-Msi([string]$action, [string]$path, [string]$log) {
+            $msi = (Resolve-Path $path).Path
+            $p = Start-Process msiexec.exe -ArgumentList "$action `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+            if ($p.ExitCode -ne 0) {
+              Get-Content $log -Tail 100
+              throw "MSI exit code $($p.ExitCode)"
+            }
+          }
+          $candidate = "dist\Hifaz-0.2.0-x64.msi"
+          Run-Msi "/i" "build\$previous" "build\upgrade-old.log"
+          $dir = Join-Path $env:LOCALAPPDATA "Hifaz"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $marker = Join-Path $dir "upgrade-verification.txt"
+          Set-Content $marker "preserve profile data"
+          Run-Msi "/i" $candidate "build\upgrade-new.log"
+          if ((Get-Content $marker) -ne "preserve profile data") { throw "Upgrade changed local data" }
+          if ((Get-Service Hifaz).Status -ne "Running") { throw "Service failed to start after upgrade" }
+          Run-Msi "/x" $candidate "build\upgrade-remove.log"
+          if ((Get-Content $marker) -ne "preserve profile data") { throw "Uninstall changed local data" }
+          if (Get-Service Hifaz -ErrorAction SilentlyContinue) { throw "Service remained after uninstall" }
       - name: Publish the UI screenshots to the ci/ui-screenshots branch
         if: always() && github.event_name == 'push'
         shell: bash
