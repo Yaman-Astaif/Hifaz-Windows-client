@@ -1,0 +1,7 @@
+time=2026-11-20T14:15:08.319Z level=INFO msg=starting version=0.0.91
+time=2026-11-20T14:15:08.417Z level=INFO msg="window created"
+time=2026-11-20T14:15:08.417Z level=INFO msg="the page can be inspected on a local debugging port" arg="--remote-debugging-port=9222"
+2026/11/20 14:15:09 [WebView2] Environment created successfully
+time=2026-11-20T14:15:17.385Z level=INFO msg="web view ready; loading the page" width=460 height=680
+time=2026-11-20T14:15:19.023Z level=INFO msg="page loaded"
+time=2026-11-20T14:15:21.901Z level=INFO msg="action failed" err="invalid enrollment link"
