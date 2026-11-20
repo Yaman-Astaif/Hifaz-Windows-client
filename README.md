@@ -91,7 +91,8 @@ pinned (`third_party/wireguard-nt/SHA256`).
 Every computer, and every Windows account on it, is its own device on the
 server, and the administrator approves each one with a link.
 
-- **Reinstalled Hifaz, or Windows, on the same computer:** ask your
+- **Reinstalled Hifaz after removing its local data, or reinstalled Windows
+  on the same computer:** ask your
   administrator for a *renewal link* for this computer's device. The app shows
   "Welcome back" and the device name. You sign in with your own password, and
   your code if you use two-step verification. The server replaces that
@@ -100,8 +101,10 @@ server, and the administrator approves each one with a link.
 
 Your password and two-step code alone are not enough. The device keys are
 created on the computer, stay protected for your Windows account, and are never
-exported or copied, so a new installation has no keys until the administrator
-approves it. Uninstalling deletes them; upgrading or repairing keeps them.
+exported or copied. A first-time installation has no keys until the
+administrator approves it. Uninstalling, upgrading, and repairing keep local
+Hifaz data. To clear it after uninstalling, delete `%LOCALAPPDATA%\Hifaz`
+from your own Windows account.
 
 Administrators: for a reinstall, prefer a renewal link for the existing device
 over a new device link, so that old device records do not pile up.

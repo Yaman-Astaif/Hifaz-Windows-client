@@ -294,12 +294,11 @@ func secureDir(dir string) error {
 		owner, nil, dacl, nil)
 }
 
-// Cleanup removes what Hifaz leaves on the computer: the tunnel adapter,
-// the DNS rule, the WireGuardNT driver if nothing else uses it, the
-// service's folder, and every user's Hifaz folder. The installer runs it
-// when Hifaz is removed (not on upgrades).
+// Cleanup removes the machine-wide Hifaz resources: the tunnel adapter,
+// the DNS rule, the WireGuardNT driver if unused, and the service's folder.
+// The installer runs it on full uninstall. Per-user data stays in each profile.
 func Cleanup() error {
-	errs := []error{tunnel.Cleanup(), tunnel.RemoveDriverIfUnused(), removeUserData()}
+	errs := []error{tunnel.Cleanup(), tunnel.RemoveDriverIfUnused()}
 	if dir, err := DataDir(); err == nil {
 		errs = append(errs, removeFolder(dir))
 	}

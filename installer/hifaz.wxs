@@ -12,7 +12,8 @@
     Program Files\Hifaz\licenses\          licence texts
   and a Start menu entry and one start-up entry for all users. Removing
   Hifaz runs "hifaz-service.exe cleanup" first (not on upgrades), which
-  removes the adapter, DNS rule, driver if unused, and all Hifaz data.
+  removes the adapter, DNS rule, driver if unused, and service data.
+  Each Windows account retains its local Hifaz data.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Hifaz"

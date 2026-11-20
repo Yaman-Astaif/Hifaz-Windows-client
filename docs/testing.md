@@ -75,5 +75,6 @@ Alongside the WireGuard app
 - [ ] Proxy set in Windows settings: the app reaches the server through it.
 
 Uninstall
-- [ ] Uninstall: no `Hifaz` adapter, no NRPT rule under `HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig`, no `Program Files\Hifaz`, no `%LOCALAPPDATA%\Hifaz` for any user, no start-up entry.
-- [ ] Upgrade (install a newer MSI over an older one): keeps the enrollment.
+- [ ] Uninstall: no `Hifaz` adapter, no NRPT rule under `HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig`, no `Program Files\Hifaz`, no start-up entry. Existing `%LOCALAPPDATA%\Hifaz` data remains for each user.
+- [ ] After uninstall, each user can delete their own `%LOCALAPPDATA%\Hifaz` folder from their Windows account.
+- [ ] Upgrade (install a newer MSI over an older one): keeps the enrollment and per-user data.

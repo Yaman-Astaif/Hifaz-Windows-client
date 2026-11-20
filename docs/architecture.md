@@ -41,7 +41,7 @@
 | Endpoint lookup returns no usable address | The service skips unspecified, loopback and multicast addresses and chooses the first usable IPv4 answer, falling back to the first usable IPv6 answer. If none remain, sign-in fails and the error names the endpoint host. During reconfiguration, a failed lookup is logged and the current endpoint is kept. |
 | Endpoint resolving inside the tunnel | When the endpoint name changes while connected, the lookup goes to the server's DNS. If the answer is a private, CGNAT, unique-local or link-local address inside the server's narrower routes, it is assumed to be a private answer from the server's DNS, reachable only through the tunnel. The driver does not send the encrypted packets into its own interface, so the tunnel would stop working. The service keeps the current endpoint and logs a line; the next sign-in resolves again. A public address, a literal IP endpoint, or any address when the routes cover its whole family (a full tunnel, however split, as for the full-tunnel policy) is followed. If only the port changes, the service keeps the address without a lookup. |
 | Planting files where the service writes | Service data is in `Program Files\Hifaz\Data` (users cannot create anything there beforehand), with a protected ACL; links are refused. |
-| Uninstall deleting the wrong folder | Per-user folders that are links are removed as links only. |
+| Elevated uninstall traversing user-controlled paths | Elevated cleanup is limited to machine-wide resources and leaves per-user folders in place. |
 | Another VPN's kill switch | The WireGuard app's "Block untunneled traffic" drops Hifaz's packets before they reach the Hifaz adapter. Hifaz never changes or works around another app's firewall, routes or DNS. It applies its DNS only after the server's first handshake, so the user's DNS keeps working; the app says the server doesn't answer, and, from a read-only WFP check, names the WireGuard tunnel to change. |
 | Script injection in the window | The page sets text only, never HTML; strict CSP; no external content; dev tools, context menu and password autosave off. |
 
@@ -161,4 +161,4 @@ again every minute and resumes probing when the blocker clears.
   answer.
 - Uninstall removes the adapter, the rule, the driver if no other program
   uses it (the WireGuard app reinstalls it when it needs it), the service
-  data and every user's Hifaz folder.
+  data. Each Windows account retains its local Hifaz folder.
