@@ -52,12 +52,6 @@ jobs:
       - name: Install, check, remove (x64)
         shell: pwsh
         run: scripts\test-install.ps1 -Msi dist\Hifaz-0.2.0-x64.msi
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-      - name: UI test (installed app, window, page, screenshots)
-        shell: pwsh
-        run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.2.0-x64.msi -Out build\ui
       - name: Verify upgrade from the latest public release
         shell: pwsh
         env:
@@ -88,6 +82,12 @@ jobs:
           Run-Msi "/x" $candidate "build\upgrade-remove.log"
           if ((Get-Content $marker) -ne "preserve profile data") { throw "Uninstall changed local data" }
           if (Get-Service Hifaz -ErrorAction SilentlyContinue) { throw "Service remained after uninstall" }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: UI test (installed app, window, page, screenshots)
+        shell: pwsh
+        run: scripts\test-ui.ps1 -Msi dist\Hifaz-0.2.0-x64.msi -Out build\ui
       - name: Publish the UI screenshots to the ci/ui-screenshots branch
         if: always() && github.event_name == 'push'
         shell: bash
