@@ -334,9 +334,8 @@ func (t *Tunnel) Reconfigure(cfg *protocol.TunnelConfig) error {
 	case cfg.EndpointHost != t.host:
 		endpoint, err := resolve(cfg.EndpointHost, cfg.EndpointPort)
 		if err != nil {
-			return err
-		}
-		if RefuseEndpoint(cfg.EndpointHost, endpoint.Addr(), cfg.AllowedIPs) {
+			t.log("could not resolve the new endpoint; keeping the current one", "err", err)
+		} else if RefuseEndpoint(cfg.EndpointHost, endpoint.Addr(), cfg.AllowedIPs) {
 			// The server's DNS gave a private address inside the narrower
 			// routes, assumed reachable only through the tunnel; the driver
 			// does not send the encrypted packets into its own interface,
@@ -439,15 +438,7 @@ func resolve(host string, port uint16) (netip.AddrPort, error) {
 	if err != nil {
 		return netip.AddrPort{}, fmt.Errorf("resolving %s: %w", net.JoinHostPort(host, strconv.Itoa(int(port))), err)
 	}
-	for _, a := range addrs { // prefer IPv4, which every network has
-		if a.Unmap().Is4() {
-			return netip.AddrPortFrom(a.Unmap(), port), nil
-		}
-	}
-	if len(addrs) == 0 {
-		return netip.AddrPort{}, fmt.Errorf("resolving %s: no address", host)
-	}
-	return netip.AddrPortFrom(addrs[0], port), nil
+	return selectEndpoint(host, port, addrs)
 }
 
 // RemoveDriverIfUnused removes the WireGuardNT driver when no adapter, of

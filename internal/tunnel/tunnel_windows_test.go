@@ -30,10 +30,23 @@ func TestTunnelUpDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	tun := New(func(msg string, args ...any) { t.Log(append([]any{msg}, args...)...) })
+	loopback := *cfg
+	loopback.EndpointHost = "localhost"
+	if err := tun.Up(&loopback, priv, protocol.Key{1}); err == nil || err.Error() != "resolving localhost: no usable address" {
+		t.Fatalf("Up with a loopback DNS answer: %v", err)
+	}
 	if err := tun.Up(cfg, priv, protocol.Key{1}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { tun.Down() })
+
+	endpoint := tun.endpoint
+	if err := tun.Reconfigure(&loopback); err != nil {
+		t.Fatalf("Reconfigure with a loopback DNS answer: %v", err)
+	}
+	if tun.endpoint != endpoint || tun.host != cfg.EndpointHost {
+		t.Fatalf("Reconfigure changed the endpoint to %v (%s)", tun.endpoint, tun.host)
+	}
 
 	if _, err := driver.OpenAdapter(AdapterName); err != nil {
 		t.Fatalf("adapter not found: %v", err)
