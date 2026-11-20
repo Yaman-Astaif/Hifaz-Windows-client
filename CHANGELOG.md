@@ -1,9 +1,24 @@
 # Changelog
 
-## 0.2.0 — 2026-11-13
+## 0.2.0
 
 Still needs a Hifaz server 0.8.0 or later; client protocol version 1 is
 unchanged. Upgrading over 0.1.x keeps the enrollment.
+
+**Security and administration**
+- Elevated uninstall removes machine-wide resources. Device enrollment and
+  other local data stay in each Windows profile. To clear that data after
+  uninstall, delete `%LOCALAPPDATA%\Hifaz` from your own account.
+- Every machine allowlist entry now requires a URL and the server's signing
+  fingerprint. Before upgrading, update any URL-only entries under
+  `HKLM\SOFTWARE\Policies\Hifaz` with an administrator-verified fingerprint.
+  An invalid entry causes the service to refuse all servers.
+- The service limits named-pipe connections per Windows account, caps
+  unidentified connections, and closes connections that exceed I/O deadlines.
+- The service tears down tunnels when the signed session deadline passes,
+  including during a control API outage.
+- Legacy enrollment links ask you to confirm the server fingerprint before
+  the app sends the enrollment token.
 
 **Service**
 - Fixed: normal (non-administrator) users could not reach the Hifaz service,
@@ -15,7 +30,8 @@ unchanged. Upgrading over 0.1.x keeps the enrollment.
 
 **Enrollment**
 - People who used Hifaz before are told which link to ask for: a renewal
-  link after reinstalling, a new device link for another computer. A renewal
+  link if the existing device keys were cleared, and a new device link for
+  another computer. A renewal
   link greets you with "Welcome back" and the device's name.
 - The app checks that the Hifaz service answers before it contacts the
   server, so a service problem no longer uses up the enrollment steps.
@@ -34,19 +50,27 @@ unchanged. Upgrading over 0.1.x keeps the enrollment.
 - If the tunnel cannot be opened after a correct code, the app signs out on
   the server and goes back to the sign-in screen.
 
+**Networking**
+- The app distinguishes waiting for a WireGuard handshake from a working
+  connection. DNS switches to the server after the first handshake and
+  switches back when connectivity is lost.
+- While connected, the server handles all DNS. The app remembers the
+  server's control URL address so it can still check the session if DNS
+  through the tunnel becomes unavailable.
+- The app identifies known WireGuard kill switches and rechecks the link
+  when the block clears. Endpoint updates respect split-tunnel routes.
+
 **Window**
-- The window can be resized and maximized, down to a minimum size, and stays
-  maximized when reopened from the tray (0.1.2 had a fixed size).
-- Tighter spacing: the enrollment password screen fits the window without
-  scrolling at its default size.
+- The window stays a fixed size and adjusts when moved between monitors
+  with different scaling. Long screens scroll while keeping actions visible.
+- Settings and enrollment navigation use clearer Back and Cancel actions.
+  The compact connection view includes diagnostics and background notifications.
 
 **Testing**
 - The app's protocol client is checked against the Hifaz server code for
   enrollment restarts and the sign-in code step.
-- Every build checks on Windows that the window can be resized, never goes
-  below its minimum size, and fits the enrollment password screen in Arabic
-  and English; the service connection is tested for a missing service and
-  for refused access.
+- Windows CI builds both installers, checks installation and removal, and
+  exercises the installed app's window and screens in Arabic and English.
 
 ## 0.1.2 — 2026-11-11
 
