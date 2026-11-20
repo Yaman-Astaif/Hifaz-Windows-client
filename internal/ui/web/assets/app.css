@@ -152,3 +152,25 @@ label.inline.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 
 /* Busy: the form waits for the app. */
 body.busy .btn { opacity: .6; cursor: progress; pointer-events: none; }
+
+.connection { text-align: center; }
+.connection h1.ok { font-size: 22px; margin-block: 5px; justify-content: center; }
+.connection .hint { margin-block: 9px; }
+.connection-status > p { margin-block: 8px; overflow-wrap: anywhere; }
+.btn.text-action {
+  width: auto;
+  display: block;
+  margin-inline: auto;
+  padding: 7px 12px;
+  color: var(--heading);
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn.text-action[hidden] { display: none; }
+.btn.text-action:hover { background: var(--surface); }
+.diagnostic-card details { margin-block: 12px; }
+.diagnostic-card summary { color: var(--heading); font-weight: 600; }
+.diagnostic-card details dl { margin-block-start: 8px; }
+.diagnostic-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }

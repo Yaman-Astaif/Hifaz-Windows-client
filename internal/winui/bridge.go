@@ -20,10 +20,11 @@ type message struct {
 
 // Window-level requests; everything else goes to the app.
 const (
-	msgReady    = "ready"      // the page has loaded: send it everything
-	msgSetPrefs = "set_prefs"  // language, theme, start with Windows
-	msgOpenURL  = "open_url"   // open the administrator's download page
-	msgError    = "page_error" // a script error in the page, for the log
+	msgTestNotification = "test_notification"
+	msgReady            = "ready"      // the page has loaded: send it everything
+	msgSetPrefs         = "set_prefs"  // language, theme, start with Windows
+	msgOpenURL          = "open_url"   // open the administrator's download page
+	msgError            = "page_error" // a script error in the page, for the log
 )
 
 // maxPageError bounds how much of a page error goes to the log.
@@ -33,11 +34,12 @@ const maxPageError = 300
 // ready, new prefs, a URL to open, a page error, or an app action. Anything malformed or
 // not allowed is dropped (ok false).
 type routed struct {
-	ready  bool
-	prefs  *Prefs
-	url    string
-	err    string
-	action *app.Action
+	ready            bool
+	testNotification bool
+	prefs            *Prefs
+	url              string
+	err              string
+	action           *app.Action
 }
 
 // route parses a page message. allowedURL is the only address the page may
@@ -48,6 +50,8 @@ func route(raw string, allowedURL string) (routed, bool) {
 		return routed{}, false
 	}
 	switch m.Name {
+	case msgTestNotification:
+		return routed{testNotification: true}, true
 	case msgReady:
 		return routed{ready: true}, true
 	case msgSetPrefs:

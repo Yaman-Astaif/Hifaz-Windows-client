@@ -9,9 +9,10 @@
   const all = (sel) => Array.from(document.querySelectorAll(sel));
 
   let view = { screen: "loading" };
-  let prefs = { lang: "ar", theme: "system", autostart: true };
+  let prefs = { lang: "ar", theme: "system", autostart: true, notifications: true };
   let app = { version: "", developer: "" };
-  let page = ""; // "", "settings" or "about": pages of the window itself
+  let page = ""; // window page, independent of the controller screen
+  let diagnosticsReturn = "";
   let lastScreen = "";
   let enrollmentFromSettings = false;
   let submittedLink = "";
@@ -94,7 +95,10 @@
     }
     const s = view.session;
     if (s) {
+      put("connection.account", a && [host(a.server), a.username].filter(Boolean).join(" · "));
+      put("connection.diagnostics_link", s.link !== "no_answer");
       put("session.address", s.address);
+      put("session.dns_servers", (s.dns_servers || []).join("\n"));
       put("session.connected_at_text", when(s.connected_at));
       put("session.expires_at_text", when(s.expires_at));
       put("session.traffic_text", t("trafficValue", { rx: bytes(s.rx_bytes), tx: bytes(s.tx_bytes) }));
@@ -110,6 +114,30 @@
         put("session.idle_note", t("idleNote", { idle: t("minutes", Math.max(1, Math.round(s.idle_timeout_seconds / 60))) }));
       }
     }
+    const unknown = t("diagnosticsUnknown");
+    const service = view.service_status ? t(view.service_status) : unknown;
+    const handshake = s && when(s.last_handshake) || "—";
+    let dns = unknown;
+    if (s && typeof s.dns_active === "boolean") {
+      dns = t(s.dns_active ? "diagnosticsHifazDNS" : "diagnosticsSystemDNS");
+    }
+    let connection = t("diagnosticsDisconnected");
+    if (s) connection = t(m["session.up"] ? "connected" : m["session.waiting"] ? "linkWaiting" : "linkNoAnswer");
+    put("diagnostics.service", service);
+    put("diagnostics.handshake", handshake);
+    put("diagnostics.dns", dns);
+    const manualSignOut = view.notice === "signed_out_here" || view.notice === "signed_out_from_tray";
+    const notice = !manualSignOut && view.notice && window.I18N.has(view.notice) ? t(view.notice) : "";
+    put("diagnostics.last_issue", notice || errorText(view.error));
+    put("diagnostics.report", [
+      app.version ? "Hifaz " + app.version : "Hifaz",
+      t("diagnosticsService") + ": " + service,
+      t("diagnosticsState") + ": " + connection,
+      t("lastHandshake") + ": " + handshake,
+      t("diagnosticsDNS") + ": " + dns,
+      ...(notice ? [t("diagnosticsLastIssue") + ": " + notice] : []),
+      ...(s && s.blocker && s.blocker.app === "wireguard" ? ["WireGuard: " + t("linkNoAnswer")] : []),
+    ].join("\n"));
     const u = view.update;
     if (u) {
       put("update.text", t("updateText", { min: u.min_version, current: app.version }));
@@ -174,6 +202,8 @@
     $("p-lang").value = prefs.lang;
     $("p-theme").value = prefs.theme;
     $("p-autostart").checked = !!prefs.autostart;
+    $("p-notifications").checked = !!prefs.notifications;
+    $("test-notification").disabled = !!view.busy || !prefs.notifications;
 
     // Each screen starts at the top. While an error shows, focusing a field
     // does not scroll: the error stays in view.
@@ -234,6 +264,12 @@
 
   // --- user actions ----------------------------------------------------------------
 
+  all("input.code").forEach((field) => field.addEventListener("input", () => {
+    const digits = field.value.replace(/[٠-٩۰-۹]/g, (digit) =>
+      String(digit.charCodeAt(0) & 15)).replace(/[^0-9]/g, "").slice(0, 6);
+    if (digits !== field.value) field.value = digits;
+  }));
+
   function onSubmit(id, f) {
     $(id).addEventListener("submit", (ev) => { ev.preventDefault(); if (!view.busy) { acted = true; f(); } });
   }
@@ -259,6 +295,12 @@
   function showPage(next) {
     const previous = page;
     if (previous === next) return;
+    if (next === "diagnostics") {
+      diagnosticsReturn = previous;
+      $("support-summary").open = false;
+      $("copy-result").textContent = "";
+      act("diagnostics");
+    }
     if (!previous && next) settingsOpener = document.activeElement;
     page = next;
     $("b-settings").setAttribute("aria-expanded", String(!!page));
@@ -301,7 +343,17 @@
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape" || !page || ev.defaultPrevented) return;
     ev.preventDefault();
-    showPage(page === "about" ? "settings" : "");
+    showPage(page === "diagnostics" ? diagnosticsReturn : page === "about" ? "settings" : "");
+  });
+  $("diagnostics-back").addEventListener("click", () => showPage(diagnosticsReturn));
+  $("copy-diagnostics").addEventListener("click", async () => {
+    const summary = model()["diagnostics.report"];
+    try {
+      await navigator.clipboard.writeText(summary);
+      $("copy-result").textContent = t("diagnosticsCopied");
+    } catch {
+      $("copy-result").textContent = t("diagnosticsCopyFailed");
+    }
   });
   $("b-download").addEventListener("click", () => {
     if (view.update && view.update.download_url) send({ action: "open_url", url: view.update.download_url });
@@ -335,6 +387,11 @@
   });
   $("p-lang").addEventListener("change", (ev) => setPrefs({ lang: ev.target.value }));
   $("p-theme").addEventListener("change", (ev) => setPrefs({ theme: ev.target.value }));
+  $("p-notifications").addEventListener("change", (ev) => {
+    $("notification-test-result").textContent = "";
+    setPrefs({ notifications: ev.target.checked });
+  });
+  $("test-notification").addEventListener("click", () => send({ action: "test_notification" }));
   $("p-autostart").addEventListener("change", (ev) => setPrefs({ autostart: ev.target.checked }));
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 
@@ -354,6 +411,9 @@
         $("e-name").value = "";
       }
       render();
+    },
+    onNotificationTest(sent) {
+      $("notification-test-result").textContent = t(sent ? "testNotificationSent" : "testNotificationFailed");
     },
     onPrefs(p) { prefs = Object.assign({}, prefs, p); setLang(prefs.lang); render(); },
     onApp(a) { app = Object.assign({}, app, a); render(); },

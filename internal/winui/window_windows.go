@@ -62,10 +62,14 @@ type windowHost struct {
 	webview *edge.Chromium
 	prefs   Prefs
 
-	icons          [2]windows.Handle // tray: [not connected, connected]
-	appIcons       [2]windows.Handle // the window's: [small, big]
-	trayAdded      bool
-	taskbarCreated uint32
+	icons                [2]windows.Handle // tray: [not connected, connected]
+	appIcons             [2]windows.Handle // the window's: [small, big]
+	trayAdded            bool
+	lastTrayView         app.View
+	sessionWasUp         bool
+	interruptionNotified bool
+	notificationPage     string
+	taskbarCreated       uint32
 
 	quitting          bool
 	moving            bool
@@ -476,6 +480,10 @@ func (h *windowHost) onPageMessage(raw string) {
 		h.pushApp()
 		h.pushPrefs()
 		h.pushView()
+	case r.testNotification:
+		if h.prefs.Notifications {
+			h.eval("onNotificationTest", h.showNotification("notifyTest", "diagnostics"))
+		}
 	case r.prefs != nil:
 		h.setPrefs(*r.prefs)
 	case r.err != "":
@@ -499,8 +507,21 @@ func (h *windowHost) eval(fn string, v any) {
 }
 
 func (h *windowHost) pushView() {
-	h.eval("onView", views.get())
+	v := views.get()
+	h.eval("onView", v)
 	h.updateTray()
+	iconic, _, _ := pIsIconic.Call(uintptr(h.hwnd))
+	background := !h.visible() || iconic != 0
+	key, page := connectionNotification(h.lastTrayView, v, background, h.sessionWasUp, h.interruptionNotified)
+	h.lastTrayView = v
+	_, up := trayState(v)
+	h.sessionWasUp = v.Screen == app.ScreenConnected && (up || h.sessionWasUp)
+	if v.Screen != app.ScreenConnected || up {
+		h.interruptionNotified = false
+	}
+	if key != "" && h.prefs.Notifications && h.showNotification(key, page) {
+		h.interruptionNotified = key == "notifyBlocked" || key == "notifyNoAnswer"
+	}
 }
 
 func (h *windowHost) pushPrefs() { h.eval("onPrefs", h.prefs) }
@@ -512,6 +533,9 @@ func (h *windowHost) pushApp() {
 
 func (h *windowHost) setPrefs(p Prefs) {
 	h.prefs = p
+	if !p.Notifications {
+		h.interruptionNotified = false
+	}
 	if err := SavePrefs(h.o.PrefsPath, p); err != nil {
 		h.o.Log("saving preferences failed", "err", err)
 	}
@@ -563,8 +587,36 @@ func (h *windowHost) removeTray() {
 	}
 }
 
+func (h *windowHost) showNotification(key, page string) bool {
+	if !h.trayAdded {
+		h.o.Log("notification unavailable: tray icon is missing", "event", key)
+		return false
+	}
+	d := h.trayData()
+	d.Flags = nifInfo
+	d.InfoFlags = 1 // NIIF_INFO; Windows still applies its notification settings
+	message, _ := windows.UTF16FromString(text(h.prefs.Lang, key))
+	title, _ := windows.UTF16FromString(text(h.prefs.Lang, "notifyTitle"))
+	copy(d.Info[:len(d.Info)-1], message)
+	copy(d.InfoTitle[:len(d.InfoTitle)-1], title)
+	if r, _, _ := pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(d))); r == 0 {
+		h.o.Log("Windows rejected the notification", "event", key)
+		return false
+	}
+	h.o.Log("notification submitted to Windows", "event", key)
+	h.notificationPage = page
+	return true
+}
+
 func (h *windowHost) onTray(event uint32) {
 	switch event {
+	case ninBalloonShow:
+		h.o.Log("Windows displayed the notification")
+	case ninBalloonHide:
+		h.o.Log("Windows hid the notification")
+	case ninBalloonUserClick:
+		h.show()
+		h.eval("showPage", h.notificationPage)
 	case ninSelect, ninKeySelect, wmLButtonUp:
 		if h.visible() {
 			h.hide()
@@ -607,7 +659,7 @@ func (h *windowHost) trayMenu() {
 	case menuOpen, menuConnect:
 		h.show()
 	case menuDisconnect:
-		h.o.Controller.Do(app.Action{Name: "disconnect"})
+		h.o.Controller.Do(app.Action{Name: "disconnect_from_tray"})
 	case menuQuit:
 		h.quit()
 	}

@@ -13,13 +13,16 @@ import (
 
 // Prefs are the user's choices for the window.
 type Prefs struct {
-	Lang      string `json:"lang"`      // "ar" or "en"
-	Theme     string `json:"theme"`     // "system", "light" or "dark"
-	Autostart bool   `json:"autostart"` // start with Windows
+	Lang          string `json:"lang"`  // "ar" or "en"
+	Theme         string `json:"theme"` // "system", "light" or "dark"
+	Notifications bool   `json:"notifications"`
+	Autostart     bool   `json:"autostart"` // start with Windows
 }
 
 // DefaultPrefs: Arabic, the device's theme, starting with Windows.
-func DefaultPrefs() Prefs { return Prefs{Lang: "ar", Theme: "system", Autostart: true} }
+func DefaultPrefs() Prefs {
+	return Prefs{Lang: "ar", Theme: "system", Autostart: true, Notifications: true}
+}
 
 // Valid reports whether every field has an allowed value.
 func (p Prefs) Valid() bool {

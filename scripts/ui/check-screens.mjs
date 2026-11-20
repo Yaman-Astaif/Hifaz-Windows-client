@@ -240,6 +240,33 @@ try {
     check(Object.values(navigation).every(Boolean), `connected → Settings → About → Settings → connected, ${lang}`);
   }
 
+  for (const lang of ["ar", "en"]) {
+    const connected = cases[8][1];
+    await show({ ...connected, service_status: "diagnosticsServiceRunning",
+      session: { ...connected.session, dns_active: true, dns_servers: ["192.0.2.53"] } }, "", { lang, theme: "light" });
+    const result = await cdp.evaluate(`(() => {
+      const section = document.querySelector('[data-screen="connected"]');
+      const primary = section.querySelector('[data-act="disconnect"]');
+      const link = section.querySelector('.actions [data-page-go="diagnostics"]');
+      const primaryFirst = primary.nextElementSibling === link;
+      link.click();
+      const diagnostics = document.querySelector('[data-page="diagnostics"]');
+      const summary = document.querySelector('#support-summary pre').textContent;
+      const open = !diagnostics.hidden && section.hidden;
+      const redacted = summary.length > 0 && !/vpn\\.example\\.com|first\\.last|10\\.98\\.0\\.17|192\\.0\\.2\\.53/.test(summary);
+      document.getElementById('diagnostics-back').click();
+      return { primaryFirst, open, redacted, returned: !section.hidden };
+    })()`);
+    check(Object.values(result).every(Boolean), `Diagnostics opens, redacts details, and returns, ${lang}`);
+  }
+
+  const codes = await cdp.evaluate(`Array.from(document.querySelectorAll("input.code"), (field) => {
+    field.value = "a٠1۲-3٤۵x6";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field.value;
+  })`);
+  check(codes.length === 4 && codes.every((code) => code === "012345"), "all code fields keep six digits and accept Arabic numerals");
+
   // Back to the first screen, as the app left it.
   await cdp.send("Emulation.clearDeviceMetricsOverride");
   await show({ screen: "setup" }, "", { lang: "ar", theme: "light" });
