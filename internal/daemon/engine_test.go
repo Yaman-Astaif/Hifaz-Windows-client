@@ -316,6 +316,28 @@ func TestOwnerGoneTakesTunnelDown(t *testing.T) {
 	}
 }
 
+func TestMachineAllowlistRequiresSigningFingerprint(t *testing.T) {
+	h := newHarness(t)
+	h.register(alice) // A pin saved before the machine policy was applied.
+	actual := protocol.FingerprintOf(h.id.Public().(ed25519.PublicKey))
+	const wrong = protocol.Fingerprint("Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q")
+	for _, fp := range []protocol.Fingerprint{"", wrong} {
+		h.pol.Servers = []policy.Server{{URL: server, Fingerprint: fp}}
+		req := ipc.Request{Op: ipc.OpRegister, Server: server, IdentityKey: h.keyB64, Document: h.enrolledDoc(h.nonce(alice))}
+		if got := code(h.do(1, alice, req)); got != ipc.ErrServerNotAllowed {
+			t.Fatalf("register with policy fingerprint %q: got %q", fp, got)
+		}
+		if got := code(h.connect(1, alice, config(1))); got != ipc.ErrServerNotAllowed || h.tun.up {
+			t.Fatalf("connect with policy fingerprint %q: got %q, up=%v", fp, got, h.tun.up)
+		}
+	}
+	h.pol.Servers = []policy.Server{{URL: server, Fingerprint: actual}}
+	h.register(alice)
+	if r := h.connect(1, alice, config(1)); r.Error != nil || !h.tun.up {
+		t.Fatalf("connect with matching fingerprint: %v, up=%v", r.Error, h.tun.up)
+	}
+}
+
 func TestPolicy(t *testing.T) {
 	h := newHarness(t)
 	h.register(alice)
@@ -841,27 +863,5 @@ func TestKillSwitchEnabledWhileConnected(t *testing.T) {
 	h.tick(linkPoll)
 	if st := h.status(alice); st.Link != ipc.LinkUp || st.Blocker != nil || !h.tun.dns {
 		t.Fatalf("after recovery: %+v, DNS %v", st, h.tun.dns)
-	}
-}
-
-func TestMachineAllowlistRequiresSigningFingerprint(t *testing.T) {
-	h := newHarness(t)
-	h.register(alice) // A pin saved before the machine policy was applied.
-	actual := protocol.FingerprintOf(h.id.Public().(ed25519.PublicKey))
-	const wrong = protocol.Fingerprint("Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q")
-	for _, fp := range []protocol.Fingerprint{"", wrong} {
-		h.pol.Servers = []policy.Server{{URL: server, Fingerprint: fp}}
-		req := ipc.Request{Op: ipc.OpRegister, Server: server, IdentityKey: h.keyB64, Document: h.enrolledDoc(h.nonce(alice))}
-		if got := code(h.do(1, alice, req)); got != ipc.ErrServerNotAllowed {
-			t.Fatalf("register with policy fingerprint %q: got %q", fp, got)
-		}
-		if got := code(h.connect(1, alice, config(1))); got != ipc.ErrServerNotAllowed || h.tun.up {
-			t.Fatalf("connect with policy fingerprint %q: got %q, up=%v", fp, got, h.tun.up)
-		}
-	}
-	h.pol.Servers = []policy.Server{{URL: server, Fingerprint: actual}}
-	h.register(alice)
-	if r := h.connect(1, alice, config(1)); r.Error != nil || !h.tun.up {
-		t.Fatalf("connect with matching fingerprint: %v, up=%v", r.Error, h.tun.up)
 	}
 }
