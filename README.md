@@ -117,7 +117,10 @@ Group Policy or device management):
 | Value | Type | Meaning |
 |---|---|---|
 | `AllowFullTunnel` | REG_DWORD | `1` lets a server route all traffic through the tunnel. Off by default. |
-| `Servers` | REG_MULTI_SZ | If set, the only servers allowed: `https://vpn.example.com` or `https://vpn.example.com <fingerprint>`. |
+| `Servers` | REG_MULTI_SZ | If set, the only servers allowed: `https://vpn.example.com <fingerprint>`. |
+
+Replace any URL-only entries with the URL and its administrator-verified
+signing fingerprint. An invalid entry causes the service to refuse all servers.
 
 An entry that cannot be read makes the service allow no server.
 

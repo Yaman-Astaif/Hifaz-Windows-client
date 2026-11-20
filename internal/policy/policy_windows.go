@@ -11,7 +11,7 @@ import (
 // by hand, Group Policy or device management:
 //
 //	AllowFullTunnel  REG_DWORD     1 to allow full tunnels
-//	Servers          REG_MULTI_SZ  "<public URL>" or "<public URL> <fingerprint>"
+//	Servers          REG_MULTI_SZ  "<public URL> <fingerprint>"
 const RegistryKey = `SOFTWARE\Policies\Hifaz`
 
 // Load reads the policy. A missing key is the default policy. An entry that

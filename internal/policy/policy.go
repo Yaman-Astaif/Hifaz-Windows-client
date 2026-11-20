@@ -27,31 +27,28 @@ type Policy struct {
 	Servers []Server
 }
 
-// Server is one allowed server: its public URL and, optionally, the
+// Server is one allowed server: its public URL and the
 // fingerprint it must have.
 type Server struct {
 	URL         string
 	Fingerprint protocol.Fingerprint
 }
 
-// ParseServer parses a policy entry: "<public URL>" or
-// "<public URL> <fingerprint>".
+// ParseServer parses a policy entry containing a public URL and fingerprint.
 func ParseServer(entry string) (Server, error) {
 	fields := strings.Fields(entry)
-	if len(fields) == 0 || len(fields) > 2 {
-		return Server{}, fmt.Errorf("invalid server entry %q", entry)
+	if len(fields) != 2 {
+		return Server{}, fmt.Errorf("server entry %q must contain a URL and fingerprint", entry)
 	}
 	u, err := protocol.NormalizeServerURL(fields[0])
 	if err != nil {
 		return Server{}, fmt.Errorf("server entry %q: %w", entry, err)
 	}
-	s := Server{URL: u}
-	if len(fields) == 2 {
-		if s.Fingerprint, err = protocol.ParseFingerprint(fields[1]); err != nil {
-			return Server{}, fmt.Errorf("server entry %q: %w", entry, err)
-		}
+	fp, err := protocol.ParseFingerprint(fields[1])
+	if err != nil {
+		return Server{}, fmt.Errorf("server entry %q: %w", entry, err)
 	}
-	return s, nil
+	return Server{URL: u, Fingerprint: fp}, nil
 }
 
 // Error codes of policy refusals, shown to the user by the app.
@@ -67,7 +64,7 @@ func (p Policy) AllowsServer(server string, fp protocol.Fingerprint) error {
 		return nil
 	}
 	for _, s := range p.Servers {
-		if s.URL == server && (s.Fingerprint == "" || s.Fingerprint == fp) {
+		if s.URL == server && s.Fingerprint != "" && s.Fingerprint == fp {
 			return nil
 		}
 	}

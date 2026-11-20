@@ -79,17 +79,14 @@ func TestCheckConfig(t *testing.T) {
 
 func TestServers(t *testing.T) {
 	const fp = protocol.Fingerprint("Y8wKPoS95ovsvxPa4wePDKKz-c2ZlrHJ_BdPS7aC52Q")
-	a, err := ParseServer("https://VPN.example.com/")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := Server{URL: "https://vpn.example.com"}
 	b, err := ParseServer("https://other.example.com " + string(fp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := Policy{Servers: []Server{a, b}}
-	if p.AllowsServer("https://vpn.example.com", "anything") != nil {
-		t.Error("listed server without fingerprint refused")
+	if p.AllowsServer(a.URL, fp) != ErrServerNotAllowed || p.AllowsServer(a.URL, "") != ErrServerNotAllowed {
+		t.Error("listed server without fingerprint allowed")
 	}
 	if p.AllowsServer("https://other.example.com", fp) != nil {
 		t.Error("listed server with its fingerprint refused")
@@ -103,7 +100,7 @@ func TestServers(t *testing.T) {
 	if (Policy{}).AllowsServer("https://evil.example.com", fp) != nil {
 		t.Error("empty list must allow any server")
 	}
-	for _, bad := range []string{"", "http://x.example.com", "https://x.example.com short", "a b c"} {
+	for _, bad := range []string{"", "https://vpn.example.com", "http://x.example.com", "https://x.example.com short", "a b c"} {
 		if _, err := ParseServer(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
